@@ -1,0 +1,52 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    name: Unit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go test -race ./...
+
+  integration:
+    name: Integration
+    runs-on: ubuntu-latest
+    needs: unit
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go build -o tfreport ./cmd/tfreport
+      - name: Render every fixture × target
+        run: |
+          set -e
+          fixtures=(
+            testdata/small_plan.json
+            testdata/medium_plan.json
+            testdata/delete_heavy_plan.json
+            testdata/replace_plan.json
+            testdata/import_plan.json
+          )
+          targets=(markdown github-pr-body github-pr-comment github-step-summary json)
+          for fixture in "${fixtures[@]}"; do
+            for target in "${targets[@]}"; do
+              out=$(./tfreport --plan-file "$fixture" --target "$target")
+              if [ -z "$out" ]; then
+                echo "FAIL: empty output for $fixture @ $target" >&2
+                exit 1
+              fi
+            done
+          done

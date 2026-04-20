@@ -1,0 +1,112 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.9.0",
+  "planned_values": {},
+  "resource_changes": [
+    {
+      "address": "module.virtual_network.azurerm_subnet.app",
+      "module_address": "module.virtual_network",
+      "type": "azurerm_subnet",
+      "name": "app",
+      "provider_name": "registry.terraform.io/hashicorp/azurerm",
+      "change": {
+        "actions": ["update"],
+        "before": {
+          "name": "app-subnet",
+          "address_prefixes": ["10.0.1.0/24"],
+          "tags": {"env": "prod"}
+        },
+        "after": {
+          "name": "app-subnet",
+          "address_prefixes": ["10.0.1.0/24"],
+          "tags": {"env": "prod", "managed_by": "terraform"}
+        },
+        "after_unknown": {},
+        "before_sensitive": {},
+        "after_sensitive": {}
+      }
+    },
+    {
+      "address": "module.virtual_network.azurerm_subnet.db",
+      "module_address": "module.virtual_network",
+      "type": "azurerm_subnet",
+      "name": "db",
+      "provider_name": "registry.terraform.io/hashicorp/azurerm",
+      "change": {
+        "actions": ["update"],
+        "before": {
+          "name": "db-subnet",
+          "address_prefixes": ["10.0.2.0/24"],
+          "tags": {"env": "prod"}
+        },
+        "after": {
+          "name": "db-subnet",
+          "address_prefixes": ["10.0.2.0/24"],
+          "tags": {"env": "prod", "managed_by": "terraform"}
+        },
+        "after_unknown": {},
+        "before_sensitive": {},
+        "after_sensitive": {}
+      }
+    },
+    {
+      "address": "module.privatelink.azurerm_private_endpoint.web",
+      "module_address": "module.privatelink",
+      "type": "azurerm_private_endpoint",
+      "name": "web",
+      "provider_name": "registry.terraform.io/hashicorp/azurerm",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {
+          "name": "pe-web",
+          "location": "uksouth",
+          "tags": {"env": "prod"}
+        },
+        "after_unknown": {
+          "id": true,
+          "private_dns_zone_group": true
+        },
+        "before_sensitive": {},
+        "after_sensitive": {}
+      }
+    },
+    {
+      "address": "module.routes.azurerm_route.legacy",
+      "module_address": "module.routes",
+      "type": "azurerm_route",
+      "name": "legacy",
+      "provider_name": "registry.terraform.io/hashicorp/azurerm",
+      "change": {
+        "actions": ["delete"],
+        "before": {
+          "name": "legacy-route",
+          "address_prefix": "10.99.0.0/16",
+          "next_hop_type": "VirtualAppliance"
+        },
+        "after": null,
+        "after_unknown": {},
+        "before_sensitive": {},
+        "after_sensitive": {}
+      }
+    }
+  ],
+  "configuration": {
+    "root_module": {
+      "module_calls": {
+        "virtual_network": {
+          "source": "./modules/virtual_network",
+          "module": {}
+        },
+        "privatelink": {
+          "source": "./modules/privatelink",
+          "module": {}
+        },
+        "routes": {
+          "source": "./modules/routes",
+          "module": {}
+        }
+      }
+    }
+  }
+}

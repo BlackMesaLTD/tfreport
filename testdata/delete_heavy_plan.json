@@ -1,0 +1,119 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.9.0",
+  "planned_values": {},
+  "resource_changes": [
+    {
+      "address": "module.decommission.azurerm_subnet.legacy1",
+      "module_address": "module.decommission",
+      "type": "azurerm_subnet",
+      "name": "legacy1",
+      "provider_name": "registry.terraform.io/hashicorp/azurerm",
+      "change": {
+        "actions": ["delete"],
+        "before": {"name": "snet-legacy1", "address_prefixes": ["10.0.50.0/24"]},
+        "after": null,
+        "after_unknown": {},
+        "before_sensitive": {},
+        "after_sensitive": {}
+      }
+    },
+    {
+      "address": "module.decommission.azurerm_subnet.legacy2",
+      "module_address": "module.decommission",
+      "type": "azurerm_subnet",
+      "name": "legacy2",
+      "provider_name": "registry.terraform.io/hashicorp/azurerm",
+      "change": {
+        "actions": ["delete"],
+        "before": {"name": "snet-legacy2", "address_prefixes": ["10.0.51.0/24"]},
+        "after": null,
+        "after_unknown": {},
+        "before_sensitive": {},
+        "after_sensitive": {}
+      }
+    },
+    {
+      "address": "module.decommission.azurerm_network_security_group.legacy",
+      "module_address": "module.decommission",
+      "type": "azurerm_network_security_group",
+      "name": "legacy",
+      "provider_name": "registry.terraform.io/hashicorp/azurerm",
+      "change": {
+        "actions": ["delete"],
+        "before": {"name": "nsg-legacy"},
+        "after": null,
+        "after_unknown": {},
+        "before_sensitive": {},
+        "after_sensitive": {}
+      }
+    },
+    {
+      "address": "module.decommission.azurerm_route_table.legacy",
+      "module_address": "module.decommission",
+      "type": "azurerm_route_table",
+      "name": "legacy",
+      "provider_name": "registry.terraform.io/hashicorp/azurerm",
+      "change": {
+        "actions": ["delete"],
+        "before": {"name": "rt-legacy"},
+        "after": null,
+        "after_unknown": {},
+        "before_sensitive": {},
+        "after_sensitive": {}
+      }
+    },
+    {
+      "address": "module.decommission.azurerm_route.route1",
+      "module_address": "module.decommission",
+      "type": "azurerm_route",
+      "name": "route1",
+      "provider_name": "registry.terraform.io/hashicorp/azurerm",
+      "change": {
+        "actions": ["delete"],
+        "before": {"name": "route-1", "address_prefix": "10.99.0.0/16"},
+        "after": null,
+        "after_unknown": {},
+        "before_sensitive": {},
+        "after_sensitive": {}
+      }
+    },
+    {
+      "address": "module.decommission.azurerm_route.route2",
+      "module_address": "module.decommission",
+      "type": "azurerm_route",
+      "name": "route2",
+      "provider_name": "registry.terraform.io/hashicorp/azurerm",
+      "change": {
+        "actions": ["delete"],
+        "before": {"name": "route-2", "address_prefix": "10.98.0.0/16"},
+        "after": null,
+        "after_unknown": {},
+        "before_sensitive": {},
+        "after_sensitive": {}
+      }
+    },
+    {
+      "address": "module.decommission.azurerm_private_endpoint.sql",
+      "module_address": "module.decommission",
+      "type": "azurerm_private_endpoint",
+      "name": "sql",
+      "provider_name": "registry.terraform.io/hashicorp/azurerm",
+      "change": {
+        "actions": ["delete"],
+        "before": {"name": "pe-sql-legacy", "location": "uksouth"},
+        "after": null,
+        "after_unknown": {},
+        "before_sensitive": {},
+        "after_sensitive": {}
+      }
+    }
+  ],
+  "configuration": {
+    "root_module": {
+      "module_calls": {
+        "decommission": {"source": "./modules/decommission", "module": {}}
+      }
+    }
+  }
+}

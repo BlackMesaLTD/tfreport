@@ -1,0 +1,82 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.9.0",
+  "planned_values": {},
+  "resource_changes": [
+    {
+      "address": "module.network.azurerm_subnet.main",
+      "module_address": "module.network",
+      "type": "azurerm_subnet",
+      "name": "main",
+      "provider_name": "registry.terraform.io/hashicorp/azurerm",
+      "change": {
+        "actions": ["delete", "create"],
+        "before": {
+          "name": "main-subnet",
+          "address_prefixes": ["10.0.1.0/24"],
+          "service_endpoints": ["Microsoft.Sql"]
+        },
+        "after": {
+          "name": "main-subnet",
+          "address_prefixes": ["10.0.2.0/24"],
+          "service_endpoints": ["Microsoft.Sql", "Microsoft.Storage"]
+        },
+        "after_unknown": {"id": true},
+        "before_sensitive": {},
+        "after_sensitive": {}
+      }
+    },
+    {
+      "address": "module.network.azurerm_subnet.aks",
+      "module_address": "module.network",
+      "type": "azurerm_subnet",
+      "name": "aks",
+      "provider_name": "registry.terraform.io/hashicorp/azurerm",
+      "change": {
+        "actions": ["delete", "create"],
+        "before": {
+          "name": "aks-subnet",
+          "address_prefixes": ["10.0.10.0/22"]
+        },
+        "after": {
+          "name": "aks-subnet",
+          "address_prefixes": ["10.0.16.0/22"]
+        },
+        "after_unknown": {"id": true},
+        "before_sensitive": {},
+        "after_sensitive": {}
+      }
+    },
+    {
+      "address": "module.network.azurerm_route_table.main",
+      "module_address": "module.network",
+      "type": "azurerm_route_table",
+      "name": "main",
+      "provider_name": "registry.terraform.io/hashicorp/azurerm",
+      "change": {
+        "actions": ["update"],
+        "before": {
+          "name": "rt-main",
+          "tags": {"env": "prod"}
+        },
+        "after": {
+          "name": "rt-main",
+          "tags": {"env": "prod", "cost_center": "12345"}
+        },
+        "after_unknown": {},
+        "before_sensitive": {},
+        "after_sensitive": {}
+      }
+    }
+  ],
+  "configuration": {
+    "root_module": {
+      "module_calls": {
+        "network": {
+          "source": "./modules/network",
+          "module": {}
+        }
+      }
+    }
+  }
+}

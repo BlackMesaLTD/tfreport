@@ -1,0 +1,87 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.9.0",
+  "planned_values": {},
+  "resource_changes": [
+    {
+      "address": "module.import.azurerm_resource_group.rg",
+      "module_address": "module.import",
+      "type": "azurerm_resource_group",
+      "name": "rg",
+      "provider_name": "registry.terraform.io/hashicorp/azurerm",
+      "change": {
+        "actions": ["no-op"],
+        "before": {
+          "name": "legacy-rg",
+          "location": "eastus",
+          "tags": {"Environment": "Production"}
+        },
+        "after": {
+          "name": "legacy-rg",
+          "location": "eastus",
+          "tags": {"Environment": "Production"}
+        },
+        "after_unknown": {},
+        "before_sensitive": {},
+        "after_sensitive": {},
+        "importing": {
+          "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/legacy-rg"
+        }
+      }
+    },
+    {
+      "address": "module.import.azurerm_virtual_network.main",
+      "module_address": "module.import",
+      "type": "azurerm_virtual_network",
+      "name": "main",
+      "provider_name": "registry.terraform.io/hashicorp/azurerm",
+      "change": {
+        "actions": ["update"],
+        "before": {
+          "name": "legacy-vnet",
+          "address_space": ["10.0.0.0/16"],
+          "tags": {"Environment": "Production"}
+        },
+        "after": {
+          "name": "legacy-vnet",
+          "address_space": ["10.0.0.0/16"],
+          "tags": {"Environment": "Production", "managed_by": "terraform"}
+        },
+        "after_unknown": {},
+        "before_sensitive": {},
+        "after_sensitive": {},
+        "importing": {
+          "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/legacy-rg/providers/Microsoft.Network/virtualNetworks/legacy-vnet"
+        }
+      }
+    },
+    {
+      "address": "module.import.azurerm_subnet.new_one",
+      "module_address": "module.import",
+      "type": "azurerm_subnet",
+      "name": "new_one",
+      "provider_name": "registry.terraform.io/hashicorp/azurerm",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {
+          "name": "brand-new-subnet",
+          "address_prefixes": ["10.0.5.0/24"]
+        },
+        "after_unknown": {},
+        "before_sensitive": {},
+        "after_sensitive": {}
+      }
+    }
+  ],
+  "configuration": {
+    "root_module": {
+      "module_calls": {
+        "import": {
+          "source": "./modules/import",
+          "module": {}
+        }
+      }
+    }
+  }
+}
