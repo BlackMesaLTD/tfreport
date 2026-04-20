@@ -1,14 +1,15 @@
-name: tfreport-deliver
-description: Deliver a rendered tfreport snippet to one or more GitHub destinations — step summary, PR body section, and/or sticky PR comment
+name: tfreport-send
+description: Write a rendered tfreport snippet to one or more GitHub destinations — step summary, PR body section, and/or sticky PR comment
 author: Black Mesa Ltd
 
-# Drop-in final step that follows either the render action or the aggregate
-# action. Each destination is an independent opt-in — any combination is
-# allowed in a single call.
+# Stage 4 of the matrix pipeline, or stage 2 of the single-plan pipeline.
+# Drop-in final step after the render action or the aggregate action. Each
+# destination is an independent opt-in — any combination is allowed in a
+# single call.
 
 inputs:
   content-file:
-    description: "Path to the file containing the rendered markdown to deliver"
+    description: "Path to the file containing the rendered markdown to send"
     required: true
   step-summary:
     description: "Append the content to $GITHUB_STEP_SUMMARY"
@@ -34,7 +35,7 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Deliver
+    - name: Send
       shell: bash
       env:
         INPUT_CONTENT_FILE: ${{ inputs.content-file }}
@@ -43,4 +44,4 @@ runs:
         INPUT_PR_COMMENT_MARKER: ${{ inputs.pr-comment-marker }}
         INPUT_GITHUB_TOKEN: ${{ inputs.github-token }}
         INPUT_PR_NUMBER: ${{ inputs.pr-number }}
-      run: python3 "$GITHUB_ACTION_PATH/deliver.py"
+      run: python3 "$GITHUB_ACTION_PATH/send.py"

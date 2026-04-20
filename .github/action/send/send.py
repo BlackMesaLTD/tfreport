@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Deliver a rendered tfreport snippet to one or more GitHub destinations.
+"""Send a rendered tfreport snippet to one or more GitHub destinations.
 
-Invoked by tfreport-deliver/action.yml. Reads configuration from the
+Invoked by tfreport-send/action.yml. Reads configuration from the
 INPUT_* environment variables set by the action.
 
 Destinations (all independent, any combination):
