@@ -41,16 +41,16 @@ plan output into structured, human-readable reports for CI/CD pipelines.
 
 Best results — both JSON and text plan (step-summary and pr-comment targets
 render native per-resource text blocks only when text is supplied):
-  terraform show -json     plan.out > plan.json
-  terraform show -no-color plan.out > plan.txt
-  tfreport --plan-file plan.json --text-plan-file plan.txt --target github-step-summary
+  terraform show -json     plan.out > plan.show.json
+  terraform show -no-color plan.out > plan.show.txt
+  tfreport --plan-file plan.show.json --text-plan-file plan.show.txt --target github-step-summary
 
 Shortcut — the bundled wrapper does both terraform show calls for you:
   tfreport-from-plan plan.out --target github-step-summary
 
 JSON-only (tables and counts; no per-resource text blocks):
   terraform show -json plan.out | tfreport --target github-pr-body
-  tfreport --plan-file plan.json --target json
+  tfreport --plan-file plan.show.json --target json
 
 Re-ingest a previously exported report (for cross-step pipeline composition):
   tfreport --report-file report.json --target github-step-summary`,

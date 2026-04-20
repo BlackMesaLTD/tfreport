@@ -23,10 +23,12 @@ The richest output combines the two views of a plan — the structured JSON (for
 tfreport-from-plan plan.out --target github-step-summary
 
 # Manual equivalent: do both terraform show calls yourself
-terraform show -json     plan.out > plan.json
-terraform show -no-color plan.out > plan.txt
-tfreport --plan-file plan.json --text-plan-file plan.txt --target github-step-summary
+terraform show -json     plan.out > plan.show.json
+terraform show -no-color plan.out > plan.show.txt
+tfreport --plan-file plan.show.json --text-plan-file plan.show.txt --target github-step-summary
 ```
+
+Filenames use a `.show.` infix so they don't collide with the streaming `terraform plan -json` log that some workflows also name `plan.json`. Pick whatever names you like — tfreport doesn't care, the inputs are just flags.
 
 JSON-only modes (work fine, but step-summary / pr-comment lose their per-resource text blocks):
 
@@ -35,7 +37,7 @@ JSON-only modes (work fine, but step-summary / pr-comment lose their per-resourc
 terraform show -json plan.out | tfreport --target github-pr-body
 
 # Canonical interchange JSON for programmatic consumers
-tfreport --plan-file plan.json --target json
+tfreport --plan-file plan.show.json --target json
 ```
 
 ## Install
@@ -159,8 +161,8 @@ If you already produce the JSON yourself, `plan-file` remains supported (pass `t
 ```yaml
 - uses: BlackMesaLTD/tfreport/.github/action@v0
   with:
-    plan-file: plan.json
-    text-plan-file: plan.txt
+    plan-file: plan.show.json
+    text-plan-file: plan.show.txt
     target: github-pr-body
 ```
 
@@ -174,7 +176,7 @@ For matrix workflows planning N subscriptions or environments, use the two paire
 - uses: BlackMesaLTD/tfreport/.github/action/prepare@v0
   with:
     plan-file: ./subscriptions/${{ matrix.subscription }}/plan.show.json
-    text-plan-file: ./subscriptions/${{ matrix.subscription }}/plan.txt
+    text-plan-file: ./subscriptions/${{ matrix.subscription }}/plan.show.txt
     label: ${{ matrix.subscription }}
     config: .tfreport.yml
 ```
@@ -203,9 +205,9 @@ Skip the composite action entirely and shell out:
 ```yaml
 - name: Generate report
   run: |
-    terraform show -json     plan.out > plan.json
-    terraform show -no-color plan.out > plan.txt
-    tfreport --plan-file plan.json --text-plan-file plan.txt \
+    terraform show -json     plan.out > plan.show.json
+    terraform show -no-color plan.out > plan.show.txt
+    tfreport --plan-file plan.show.json --text-plan-file plan.show.txt \
              --target github-step-summary >> $GITHUB_STEP_SUMMARY
 ```
 
