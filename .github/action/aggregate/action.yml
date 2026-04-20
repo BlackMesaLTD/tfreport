@@ -1,0 +1,161 @@
+name: tfreport-aggregate
+description: Combine multiple tfreport report JSONs (one per subscription/environment) into a single cross-report render — the aggregation half of a multi-subscription summary workflow
+author: Black Mesa Ltd
+
+# Pairs with: .github/action/prepare
+#
+# Two input paths: either download artifacts matching a pattern (the normal
+# path after a matrix of tfreport-prepare steps), or point at a glob of
+# already-on-disk report files.
+
+inputs:
+  version:
+    description: "tfreport version to install"
+    required: false
+    default: "latest"
+  target:
+    description: "Output target (markdown, github-pr-body, github-pr-comment, github-step-summary, json)"
+    required: false
+    default: "markdown"
+  artifact-pattern:
+    description: "Pattern passed to actions/download-artifact (e.g. 'tfreport-*'). The action downloads matching artifacts under a temp path and aggregates every report.json it finds. Mutually exclusive with report-files."
+    required: false
+  report-files:
+    description: "Alternative to artifact-pattern: a glob pattern or newline-separated list of report JSON paths already on disk. Mutually exclusive with artifact-pattern."
+    required: false
+  config:
+    description: "Path to .tfreport.yml config file"
+    required: false
+  changed-only:
+    description: "Show only changed resources"
+    required: false
+    default: "true"
+  output-file:
+    description: "Optional file path to write the rendered output to. Recommended for large cross-sub renders that blow past the ~1 MB GITHUB_OUTPUT ceiling."
+    required: false
+
+outputs:
+  report:
+    description: "The rendered aggregated report (truncated to a marker if over ~1 MB — use output-file for large renders)"
+    value: ${{ steps.run.outputs.report }}
+
+runs:
+  using: composite
+  steps:
+    - name: Validate inputs
+      shell: bash
+      env:
+        INPUT_ARTIFACT_PATTERN: ${{ inputs.artifact-pattern }}
+        INPUT_REPORT_FILES: ${{ inputs.report-files }}
+      run: |
+        modes=0
+        [ -n "$INPUT_ARTIFACT_PATTERN" ] && modes=$((modes+1))
+        [ -n "$INPUT_REPORT_FILES" ]     && modes=$((modes+1))
+        if [ "$modes" -eq 0 ]; then
+          echo "::error::tfreport-aggregate: exactly one of 'artifact-pattern' or 'report-files' must be provided"
+          exit 1
+        fi
+        if [ "$modes" -gt 1 ]; then
+          echo "::error::tfreport-aggregate: 'artifact-pattern' and 'report-files' are mutually exclusive"
+          exit 1
+        fi
+
+    - name: Download artifacts
+      if: ${{ inputs.artifact-pattern != '' }}
+      uses: actions/download-artifact@v4
+      with:
+        pattern: ${{ inputs.artifact-pattern }}
+        path: ${{ runner.temp }}/tfreport-aggregate
+
+    - name: Install tfreport
+      shell: bash
+      env:
+        INPUT_VERSION: ${{ inputs.version }}
+      run: |
+        VERSION="$INPUT_VERSION"
+        if [ "$VERSION" = "latest" ]; then
+          VERSION=$(curl -s https://api.github.com/repos/BlackMesaLTD/tfreport/releases/latest | grep tag_name | cut -d '"' -f 4)
+        fi
+        VERSION="${VERSION#v}"
+        OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+        ARCH=$(uname -m)
+        case "$ARCH" in
+          x86_64) ARCH="amd64" ;;
+          aarch64) ARCH="arm64" ;;
+        esac
+        BASE_URL="https://github.com/BlackMesaLTD/tfreport/releases/download/v${VERSION}"
+        ARCHIVE="tfreport_${VERSION}_${OS}_${ARCH}.tar.gz"
+        curl -sL "${BASE_URL}/${ARCHIVE}" -o "/tmp/${ARCHIVE}"
+        curl -sL "${BASE_URL}/checksums.txt" -o /tmp/checksums.txt
+        cd /tmp && grep "${ARCHIVE}" checksums.txt | sha256sum --check --strict
+        tar xzf "/tmp/${ARCHIVE}" -C /usr/local/bin tfreport
+        chmod +x /usr/local/bin/tfreport
+        rm -f "/tmp/${ARCHIVE}" /tmp/checksums.txt
+
+    - name: Run tfreport (multi-report aggregation)
+      id: run
+      shell: bash
+      env:
+        INPUT_ARTIFACT_PATTERN: ${{ inputs.artifact-pattern }}
+        INPUT_REPORT_FILES: ${{ inputs.report-files }}
+        INPUT_TARGET: ${{ inputs.target }}
+        INPUT_CONFIG: ${{ inputs.config }}
+        INPUT_CHANGED_ONLY: ${{ inputs.changed-only }}
+        INPUT_OUTPUT_FILE: ${{ inputs.output-file }}
+        DOWNLOAD_DIR: ${{ runner.temp }}/tfreport-aggregate
+      run: |
+        shopt -s nullglob
+
+        # Collect report files from whichever input mode was chosen.
+        reports=()
+        if [ -n "$INPUT_ARTIFACT_PATTERN" ]; then
+          # actions/download-artifact places each artifact as a subdir.
+          # A tfreport-prepare artifact contains exactly one report.json.
+          while IFS= read -r -d '' f; do
+            reports+=("$f")
+          done < <(find "$DOWNLOAD_DIR" -type f -name '*.json' -print0 2>/dev/null)
+        else
+          while IFS= read -r line; do
+            line="${line## }"; line="${line%% }"
+            [ -z "$line" ] && continue
+            for p in $line; do reports+=("$p"); done
+          done <<< "$INPUT_REPORT_FILES"
+        fi
+
+        if [ ${#reports[@]} -eq 0 ]; then
+          echo "::error::tfreport-aggregate: zero report files found to aggregate"
+          exit 1
+        fi
+
+        echo "Aggregating ${#reports[@]} report(s):"
+        printf '  %s\n' "${reports[@]}"
+
+        ARGS=(--target "$INPUT_TARGET")
+        for r in "${reports[@]}"; do ARGS+=(--report-file "$r"); done
+        if [ -n "$INPUT_CONFIG" ]; then
+          ARGS+=(--config "$INPUT_CONFIG")
+        fi
+        if [ "$INPUT_CHANGED_ONLY" = "true" ]; then
+          ARGS+=(--changed-only)
+        fi
+
+        OUTPUT=$(tfreport "${ARGS[@]}")
+
+        if [ -n "$INPUT_OUTPUT_FILE" ]; then
+          mkdir -p "$(dirname "$INPUT_OUTPUT_FILE")"
+          printf '%s' "$OUTPUT" > "$INPUT_OUTPUT_FILE"
+        fi
+
+        bytes=$(printf '%s' "$OUTPUT" | wc -c)
+        if [ "$bytes" -gt 900000 ]; then
+          echo "::warning::tfreport-aggregate: output is ${bytes} bytes; step output 'report' is omitted (GITHUB_OUTPUT cap). Use output-file to capture large renders."
+          echo "report=<output-file>" >> "$GITHUB_OUTPUT"
+        else
+          {
+            echo "report<<TFREPORT_EOF"
+            printf '%s\n' "$OUTPUT"
+            echo "TFREPORT_EOF"
+          } >> "$GITHUB_OUTPUT"
+        fi
+
+        printf '%s\n' "$OUTPUT"
