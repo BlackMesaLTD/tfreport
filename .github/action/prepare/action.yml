@@ -1,20 +1,19 @@
-name: tfreport
-description: Render a single Terraform plan as a human-readable report
+name: tfreport-prepare
+description: Export a per-subscription tfreport report JSON as an artifact — the per-matrix-leg half of a multi-subscription summary workflow
 author: Black Mesa Ltd
 
-# Single-plan render. For multi-subscription matrix workflows, use the
-# sub-actions: .github/action/prepare (per-sub in matrix) and
-# .github/action/aggregate (cross-sub summary).
+# Call this inside each leg of a subscription/environment matrix. It produces
+# a tfreport JSON export of the plan (label-tagged) and uploads it as an
+# artifact so a downstream aggregate step can fan all of them into a single
+# cross-sub summary.
+#
+# Pairs with: .github/action/aggregate
 
 inputs:
   version:
     description: "tfreport version to install"
     required: false
     default: "latest"
-  target:
-    description: "Output target (markdown, github-pr-body, github-pr-comment, github-step-summary, json)"
-    required: false
-    default: "markdown"
   plan:
     description: "Path to a terraform binary plan file (e.g. plan.out). Requires terraform on PATH. Mutually exclusive with plan-file."
     required: false
@@ -25,23 +24,30 @@ inputs:
     description: "Path to pre-rendered terraform plan text output. Used alongside plan-file; derived automatically when plan is set."
     required: false
   label:
-    description: "Optional label stored in the rendered report (passed as --label)."
-    required: false
+    description: "Subscription/environment label stored in the exported report (becomes the <summary> title in aggregated renders)."
+    required: true
   config:
-    description: "Path to .tfreport.yml config file"
+    description: "Path to .tfreport.yml config file (applied to the JSON export)"
     required: false
   changed-only:
-    description: "Show only changed resources"
+    description: "Export only changed resources"
     required: false
     default: "true"
-  output-file:
-    description: "Optional file path to write the rendered output to. Use this for renders likely to exceed ~1 MB (step-summary of large plans)."
+  artifact-name:
+    description: "Name of the uploaded artifact. Defaults to tfreport-<label>."
     required: false
+  upload:
+    description: "Upload the produced JSON as an artifact. Set to false to skip the upload and only produce a local file."
+    required: false
+    default: "true"
 
 outputs:
-  report:
-    description: "The rendered report (truncated to a marker if over ~1 MB — use output-file for large renders)"
-    value: ${{ steps.run.outputs.report }}
+  report-file:
+    description: "Local filesystem path to the produced report JSON"
+    value: ${{ steps.run.outputs.report_file }}
+  artifact-name:
+    description: "Resolved artifact name (mirrors the input or the derived default)"
+    value: ${{ steps.run.outputs.artifact_name }}
 
 runs:
   using: composite
@@ -54,21 +60,21 @@ runs:
         INPUT_TEXT_PLAN_FILE: ${{ inputs.text-plan-file }}
       run: |
         if [ -z "$INPUT_PLAN" ] && [ -z "$INPUT_PLAN_FILE" ]; then
-          echo "::error::tfreport action: exactly one of 'plan' or 'plan-file' must be provided"
+          echo "::error::tfreport-prepare: exactly one of 'plan' or 'plan-file' must be provided"
           exit 1
         fi
         if [ -n "$INPUT_PLAN" ] && [ -n "$INPUT_PLAN_FILE" ]; then
-          echo "::error::tfreport action: 'plan' and 'plan-file' are mutually exclusive"
+          echo "::error::tfreport-prepare: 'plan' and 'plan-file' are mutually exclusive"
           exit 1
         fi
         if [ -n "$INPUT_TEXT_PLAN_FILE" ] && [ -z "$INPUT_PLAN_FILE" ]; then
-          echo "::error::tfreport action: 'text-plan-file' requires 'plan-file' (it is derived automatically from 'plan')"
+          echo "::error::tfreport-prepare: 'text-plan-file' requires 'plan-file'"
           exit 1
         fi
 
         if [ -n "$INPUT_PLAN" ]; then
           if ! command -v terraform >/dev/null 2>&1; then
-            echo "::error::tfreport action: the 'plan' input requires terraform on PATH. Add 'hashicorp/setup-terraform@v3' before this step."
+            echo "::error::tfreport-prepare: the 'plan' input requires terraform on PATH. Add 'hashicorp/setup-terraform@v3' before this step."
             exit 1
           fi
           DERIVED=$(mktemp -d)
@@ -110,22 +116,36 @@ runs:
         chmod +x /usr/local/bin/tfreport
         rm -f "/tmp/${ARCHIVE}" /tmp/checksums.txt
 
-    - name: Run tfreport
+    - name: Run tfreport (JSON export)
       id: run
       shell: bash
       env:
-        INPUT_TARGET: ${{ inputs.target }}
+        INPUT_LABEL: ${{ inputs.label }}
         INPUT_CONFIG: ${{ inputs.config }}
         INPUT_CHANGED_ONLY: ${{ inputs.changed-only }}
-        INPUT_LABEL: ${{ inputs.label }}
-        INPUT_OUTPUT_FILE: ${{ inputs.output-file }}
+        INPUT_ARTIFACT_NAME: ${{ inputs.artifact-name }}
       run: |
-        ARGS=(--plan-file "$TFREPORT_PLAN_FILE" --target "$INPUT_TARGET")
+        if [ -z "$INPUT_LABEL" ]; then
+          echo "::error::tfreport-prepare: 'label' is required"
+          exit 1
+        fi
+
+        # Artifact name: user-supplied OR derived from label (sanitised for GHA naming rules).
+        if [ -n "$INPUT_ARTIFACT_NAME" ]; then
+          ARTIFACT="$INPUT_ARTIFACT_NAME"
+        else
+          # Lower-case, replace any char not alnum/-/. with -
+          sanitised=$(printf '%s' "$INPUT_LABEL" | tr '[:upper:]' '[:lower:]' | sed 's|[^a-z0-9._-]|-|g')
+          ARTIFACT="tfreport-${sanitised}"
+        fi
+
+        OUT_DIR="${RUNNER_TEMP:-/tmp}/tfreport-prepare"
+        mkdir -p "$OUT_DIR"
+        REPORT_FILE="$OUT_DIR/report.json"
+
+        ARGS=(--plan-file "$TFREPORT_PLAN_FILE" --target json --label "$INPUT_LABEL")
         if [ -n "${TFREPORT_TEXT_PLAN_FILE:-}" ]; then
           ARGS+=(--text-plan-file "$TFREPORT_TEXT_PLAN_FILE")
-        fi
-        if [ -n "$INPUT_LABEL" ]; then
-          ARGS+=(--label "$INPUT_LABEL")
         fi
         if [ -n "$INPUT_CONFIG" ]; then
           ARGS+=(--config "$INPUT_CONFIG")
@@ -134,23 +154,19 @@ runs:
           ARGS+=(--changed-only)
         fi
 
-        OUTPUT=$(tfreport "${ARGS[@]}")
+        tfreport "${ARGS[@]}" > "$REPORT_FILE"
 
-        if [ -n "$INPUT_OUTPUT_FILE" ]; then
-          mkdir -p "$(dirname "$INPUT_OUTPUT_FILE")"
-          printf '%s' "$OUTPUT" > "$INPUT_OUTPUT_FILE"
-        fi
+        {
+          echo "report_file=$REPORT_FILE"
+          echo "artifact_name=$ARTIFACT"
+        } >> "$GITHUB_OUTPUT"
 
-        bytes=$(printf '%s' "$OUTPUT" | wc -c)
-        if [ "$bytes" -gt 900000 ]; then
-          echo "::warning::tfreport action: output is ${bytes} bytes; step output 'report' is omitted (GITHUB_OUTPUT cap). Use output-file to capture large renders."
-          echo "report=<output-file>" >> "$GITHUB_OUTPUT"
-        else
-          {
-            echo "report<<TFREPORT_EOF"
-            printf '%s\n' "$OUTPUT"
-            echo "TFREPORT_EOF"
-          } >> "$GITHUB_OUTPUT"
-        fi
+        echo "Wrote $(wc -c < "$REPORT_FILE") bytes to $REPORT_FILE (artifact: $ARTIFACT)"
 
-        printf '%s\n' "$OUTPUT"
+    - name: Upload artifact
+      if: ${{ inputs.upload == 'true' }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ steps.run.outputs.artifact_name }}
+        path: ${{ steps.run.outputs.report_file }}
+        if-no-files-found: error

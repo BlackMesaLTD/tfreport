@@ -23,10 +23,12 @@ The richest output combines the two views of a plan — the structured JSON (for
 tfreport-from-plan plan.out --target github-step-summary
 
 # Manual equivalent: do both terraform show calls yourself
-terraform show -json     plan.out > plan.json
-terraform show -no-color plan.out > plan.txt
-tfreport --plan-file plan.json --text-plan-file plan.txt --target github-step-summary
+terraform show -json     plan.out > plan.show.json
+terraform show -no-color plan.out > plan.show.txt
+tfreport --plan-file plan.show.json --text-plan-file plan.show.txt --target github-step-summary
 ```
+
+Filenames use a `.show.` infix so they don't collide with the streaming `terraform plan -json` log that some workflows also name `plan.json`. Pick whatever names you like — tfreport doesn't care, the inputs are just flags.
 
 JSON-only modes (work fine, but step-summary / pr-comment lose their per-resource text blocks):
 
@@ -35,7 +37,7 @@ JSON-only modes (work fine, but step-summary / pr-comment lose their per-resourc
 terraform show -json plan.out | tfreport --target github-pr-body
 
 # Canonical interchange JSON for programmatic consumers
-tfreport --plan-file plan.json --target json
+tfreport --plan-file plan.show.json --target json
 ```
 
 ## Install
@@ -159,19 +161,53 @@ If you already produce the JSON yourself, `plan-file` remains supported (pass `t
 ```yaml
 - uses: BlackMesaLTD/tfreport/.github/action@v0
   with:
-    plan-file: plan.json
-    text-plan-file: plan.txt
+    plan-file: plan.show.json
+    text-plan-file: plan.show.txt
     target: github-pr-body
 ```
 
-Or skip the composite action entirely and shell out:
+### Multi-subscription workflows — `prepare` + `aggregate` sub-actions
+
+For matrix workflows planning N subscriptions or environments, use the two paired sub-actions instead of the top-level action. Each does one thing.
+
+**Inside the plan matrix** (one step per leg) — `tfreport-prepare` exports a per-sub report JSON and uploads it as an artifact:
+
+```yaml
+- uses: BlackMesaLTD/tfreport/.github/action/prepare@v0
+  with:
+    plan-file: ./subscriptions/${{ matrix.subscription }}/plan.show.json
+    text-plan-file: ./subscriptions/${{ matrix.subscription }}/plan.show.txt
+    label: ${{ matrix.subscription }}
+    config: .tfreport.yml
+```
+
+The uploaded artifact is named `tfreport-<label>` by default (override with `artifact-name`). Pass `upload: false` to keep the JSON local-only.
+
+**In a downstream job** — `tfreport-aggregate` downloads matching artifacts and renders the cross-sub summary:
+
+```yaml
+- uses: BlackMesaLTD/tfreport/.github/action/aggregate@v0
+  with:
+    artifact-pattern: 'tfreport-*'
+    target: github-pr-body
+    config: .tfreport.yml
+    output-file: snippet.md
+```
+
+Alternative if the report JSONs are already on disk (e.g. produced by another tool): pass `report-files: '_reports/*.json'` instead of `artifact-pattern`.
+
+For large renders (step-summary across many subs) use `output-file` — the file is always canonical; the step output is truncated to a marker string above the ~1 MB `GITHUB_OUTPUT` ceiling.
+
+### Bare shell equivalent
+
+Skip the composite action entirely and shell out:
 
 ```yaml
 - name: Generate report
   run: |
-    terraform show -json     plan.out > plan.json
-    terraform show -no-color plan.out > plan.txt
-    tfreport --plan-file plan.json --text-plan-file plan.txt \
+    terraform show -json     plan.out > plan.show.json
+    terraform show -no-color plan.out > plan.show.txt
+    tfreport --plan-file plan.show.json --text-plan-file plan.show.txt \
              --target github-step-summary >> $GITHUB_STEP_SUMMARY
 ```
 
