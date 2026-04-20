@@ -145,30 +145,50 @@ presetgen --provider azurerm \
 
 ## GitHub Actions
 
-The composite action takes a terraform binary plan file and derives both JSON and text internally — you just need `hashicorp/setup-terraform` earlier in the workflow so `terraform` is on `PATH`:
+Seven composite actions under `.github/action/`. Start with one of the two presets; reach for primitives only when composing something unusual.
+
+### Presets (recommended — one step per journey)
+
+| Path | When to use |
+|---|---|
+| `action/report-plan` | Single Terraform plan → rendered + sent to GitHub |
+| `action/report-matrix` | Multi-subscription matrix → download artifacts, aggregate, sent to GitHub |
+
+### Primitives (mix-and-match for unusual flows)
+
+| Path | Stage | Job |
+|---|---|---|
+| `action` | render | Render a single plan to a file / step output |
+| `action/prepare` | upload | Per-sub matrix leg — export report JSON + upload as an artifact |
+| `action/download` | download | Download artifacts by pattern + emit an inventory (`count`, `reports`) |
+| `action/aggregate` | render | Combine N local report JSONs into one rendered output |
+| `action/send` | send | Write a rendered snippet to step summary / PR body / sticky PR comment |
+
+The pipeline shape:
+
+```
+Single plan:    render → send
+Matrix:         prepare (per sub) → download → aggregate → send
+```
+
+Presets wire the stages together; they internally reference primitives via `@${{ github.action_ref }}` so version drift between a preset and the primitives it uses is impossible.
+
+### Single plan — `report-plan` preset
 
 ```yaml
 - uses: hashicorp/setup-terraform@v3
 - run: terraform plan -out=plan.out
-- uses: BlackMesaLTD/tfreport/.github/action@v0
+- uses: BlackMesaLTD/tfreport/.github/action/report-plan@v0
   with:
     plan: plan.out
-    target: github-step-summary
-```
-
-If you already produce the JSON yourself, `plan-file` remains supported (pass `text-plan-file` alongside for the full output):
-
-```yaml
-- uses: BlackMesaLTD/tfreport/.github/action@v0
-  with:
-    plan-file: plan.show.json
-    text-plan-file: plan.show.txt
     target: github-pr-body
+    pr-body-marker: TFREPORT
+    github-token: ${{ secrets.GITHUB_TOKEN }}
 ```
 
-### Multi-subscription workflows — `prepare` + `aggregate` sub-actions
+Variants: pass `plan-file` (+ optional `text-plan-file`) instead of `plan` if you have the plan derivations already. Add `step-summary: 'true'` and `pr-comment-marker: TFREPORT` in any combination to hit multiple destinations from one call.
 
-For matrix workflows planning N subscriptions or environments, use the two paired sub-actions instead of the top-level action. Each does one thing.
+### Multi-subscription matrix — `prepare` + `report-matrix` preset
 
 **Inside the plan matrix** (one step per leg) — `tfreport-prepare` exports a per-sub report JSON and uploads it as an artifact:
 
@@ -181,22 +201,38 @@ For matrix workflows planning N subscriptions or environments, use the two paire
     config: .tfreport.yml
 ```
 
-The uploaded artifact is named `tfreport-<label>` by default (override with `artifact-name`). Pass `upload: false` to keep the JSON local-only.
+Default artifact name is `tfreport-<label>` (override with `artifact-name`).
 
-**In a downstream job** — `tfreport-aggregate` downloads matching artifacts and renders the cross-sub summary:
+**In a downstream job** — one step does the rest:
 
 ```yaml
-- uses: BlackMesaLTD/tfreport/.github/action/aggregate@v0
+- uses: BlackMesaLTD/tfreport/.github/action/report-matrix@v0
   with:
-    artifact-pattern: 'tfreport-*'
     target: github-pr-body
     config: .tfreport.yml
-    output-file: snippet.md
+    pr-body-marker: TFREPORT
+    github-token: ${{ secrets.GITHUB_TOKEN }}
 ```
 
-Alternative if the report JSONs are already on disk (e.g. produced by another tool): pass `report-files: '_reports/*.json'` instead of `artifact-pattern`.
+`artifact-pattern` defaults to `tfreport-*` matching what `prepare` uploads. Empty-state is handled automatically — if zero matching artifacts exist, the preset writes its `empty-message` default (`_No infrastructure changes detected in this PR._`, overridable) and still sends it.
 
-For large renders (step-summary across many subs) use `output-file` — the file is always canonical; the step output is truncated to a marker string above the ~1 MB `GITHUB_OUTPUT` ceiling.
+### `send` — destinations in detail
+
+Three optional destinations; any combination in a single call. Every preset exposes these inputs; so does `send` directly for power users with pre-rendered markdown.
+
+| Input | Effect |
+|---|---|
+| `step-summary: 'true'` | Appends to `$GITHUB_STEP_SUMMARY`. No token needed. |
+| `pr-body-marker: FOO` | Splices between `<!-- BEGIN_FOO -->` and `<!-- END_FOO -->` in the PR description. Appends the markers at the end if absent. Needs `github-token`. |
+| `pr-comment-marker: BAR` | Upserts a sticky PR comment identified by `<!-- BAR -->` at the start of the comment body. Creates on first run, edits the same comment thereafter. Needs `github-token`. |
+
+PR number is auto-derived from `$GITHUB_EVENT_PATH` (both `pull_request` and `issue` events). Override with `pr-number` for unusual cases. Outside PR context, PR destinations log a warning and skip — non-fatal.
+
+Job permissions needed for PR destinations: `pull-requests: write`.
+
+### Large renders
+
+Step output `report` is capped at ~1 MB by GitHub. `output-file` is always canonical — prefer it for step-summary renders across many subs. Presets always write to a temp file internally so `send` never hits the cap regardless.
 
 ### Bare shell equivalent
 

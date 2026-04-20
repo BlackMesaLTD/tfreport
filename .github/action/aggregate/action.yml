@@ -1,12 +1,11 @@
 name: tfreport-aggregate
-description: Combine multiple tfreport report JSONs (one per subscription/environment) into a single cross-report render — the aggregation half of a multi-subscription summary workflow
+description: Combine multiple tfreport report JSONs (one per subscription/environment) into a single cross-report render
 author: Black Mesa Ltd
 
-# Pairs with: .github/action/prepare
-#
-# Two input paths: either download artifacts matching a pattern (the normal
-# path after a matrix of tfreport-prepare steps), or point at a glob of
-# already-on-disk report files.
+# Stage 3 of the matrix pipeline (prepare → download → aggregate → send).
+# Pure render: takes local report files on disk (produced upstream by
+# tfreport-download or any other producer) and emits a rendered markdown
+# output. No artifact awareness; that's tfreport-download's job.
 
 inputs:
   version:
@@ -17,12 +16,9 @@ inputs:
     description: "Output target (markdown, github-pr-body, github-pr-comment, github-step-summary, json)"
     required: false
     default: "markdown"
-  artifact-pattern:
-    description: "Pattern passed to actions/download-artifact (e.g. 'tfreport-*'). The action downloads matching artifacts under a temp path and aggregates every report.json it finds. Mutually exclusive with report-files."
-    required: false
   report-files:
-    description: "Alternative to artifact-pattern: a glob pattern or newline-separated list of report JSON paths already on disk. Mutually exclusive with artifact-pattern."
-    required: false
+    description: "Glob pattern or newline-separated list of report JSON paths on disk (typically the `reports` output from tfreport-download)."
+    required: true
   config:
     description: "Path to .tfreport.yml config file"
     required: false
@@ -42,31 +38,6 @@ outputs:
 runs:
   using: composite
   steps:
-    - name: Validate inputs
-      shell: bash
-      env:
-        INPUT_ARTIFACT_PATTERN: ${{ inputs.artifact-pattern }}
-        INPUT_REPORT_FILES: ${{ inputs.report-files }}
-      run: |
-        modes=0
-        [ -n "$INPUT_ARTIFACT_PATTERN" ] && modes=$((modes+1))
-        [ -n "$INPUT_REPORT_FILES" ]     && modes=$((modes+1))
-        if [ "$modes" -eq 0 ]; then
-          echo "::error::tfreport-aggregate: exactly one of 'artifact-pattern' or 'report-files' must be provided"
-          exit 1
-        fi
-        if [ "$modes" -gt 1 ]; then
-          echo "::error::tfreport-aggregate: 'artifact-pattern' and 'report-files' are mutually exclusive"
-          exit 1
-        fi
-
-    - name: Download artifacts
-      if: ${{ inputs.artifact-pattern != '' }}
-      uses: actions/download-artifact@v4
-      with:
-        pattern: ${{ inputs.artifact-pattern }}
-        path: ${{ runner.temp }}/tfreport-aggregate
-
     - name: Install tfreport
       shell: bash
       env:
@@ -96,34 +67,23 @@ runs:
       id: run
       shell: bash
       env:
-        INPUT_ARTIFACT_PATTERN: ${{ inputs.artifact-pattern }}
         INPUT_REPORT_FILES: ${{ inputs.report-files }}
         INPUT_TARGET: ${{ inputs.target }}
         INPUT_CONFIG: ${{ inputs.config }}
         INPUT_CHANGED_ONLY: ${{ inputs.changed-only }}
         INPUT_OUTPUT_FILE: ${{ inputs.output-file }}
-        DOWNLOAD_DIR: ${{ runner.temp }}/tfreport-aggregate
       run: |
         shopt -s nullglob
 
-        # Collect report files from whichever input mode was chosen.
         reports=()
-        if [ -n "$INPUT_ARTIFACT_PATTERN" ]; then
-          # actions/download-artifact places each artifact as a subdir.
-          # A tfreport-prepare artifact contains exactly one report.json.
-          while IFS= read -r -d '' f; do
-            reports+=("$f")
-          done < <(find "$DOWNLOAD_DIR" -type f -name '*.json' -print0 2>/dev/null)
-        else
-          while IFS= read -r line; do
-            line="${line## }"; line="${line%% }"
-            [ -z "$line" ] && continue
-            for p in $line; do reports+=("$p"); done
-          done <<< "$INPUT_REPORT_FILES"
-        fi
+        while IFS= read -r line; do
+          line="${line## }"; line="${line%% }"
+          [ -z "$line" ] && continue
+          for p in $line; do reports+=("$p"); done
+        done <<< "$INPUT_REPORT_FILES"
 
         if [ ${#reports[@]} -eq 0 ]; then
-          echo "::error::tfreport-aggregate: zero report files found to aggregate"
+          echo "::error::tfreport-aggregate: report-files matched zero files"
           exit 1
         fi
 

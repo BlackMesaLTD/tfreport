@@ -1,0 +1,105 @@
+name: tfreport-report-plan
+description: Render a single Terraform plan and send it to GitHub (step summary, PR body, and/or sticky PR comment) — the one-step version for single-plan workflows
+author: Black Mesa Ltd
+
+# Preset wiring the render + send primitives:
+#   tfreport/.github/action  →  tfreport/.github/action/send
+#
+# Inputs mirror the underlying primitives. Internal refs use
+# ${{ github.action_ref }} so the whole chain stays on whichever version
+# the consumer pinned this preset to.
+
+inputs:
+  # Render inputs
+  version:
+    description: "tfreport version to install"
+    required: false
+    default: "latest"
+  target:
+    description: "Output target (markdown, github-pr-body, github-pr-comment, github-step-summary, json)"
+    required: false
+    default: "markdown"
+  plan:
+    description: "Path to a terraform binary plan file. Requires terraform on PATH. Mutually exclusive with plan-file."
+    required: false
+  plan-file:
+    description: "Path to a pre-rendered terraform plan JSON. Mutually exclusive with plan."
+    required: false
+  text-plan-file:
+    description: "Path to a pre-rendered terraform plan text output. Used alongside plan-file."
+    required: false
+  label:
+    description: "Optional label stored in the rendered report."
+    required: false
+  config:
+    description: "Path to .tfreport.yml config file"
+    required: false
+  changed-only:
+    description: "Show only changed resources"
+    required: false
+    default: "true"
+  output-file:
+    description: "Optional file path to persist the rendered output to. The preset always writes to a temp path regardless; use this to keep a copy at a known location."
+    required: false
+
+  # Send inputs
+  step-summary:
+    description: "Append the rendered output to $GITHUB_STEP_SUMMARY"
+    required: false
+    default: "false"
+  pr-body-marker:
+    description: "Splice the rendered output between <!-- BEGIN_<marker> --> and <!-- END_<marker> --> in the PR body. Empty = skip."
+    required: false
+    default: ""
+  pr-comment-marker:
+    description: "Upsert a sticky PR comment identified by <!-- <marker> --> at the start of the comment body. Empty = skip."
+    required: false
+    default: ""
+  github-token:
+    description: "GitHub token (required when pr-body-marker or pr-comment-marker is set)"
+    required: false
+    default: ""
+  pr-number:
+    description: "PR number override. Empty = auto-derive from the triggering event."
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve output path
+      id: resolve
+      shell: bash
+      env:
+        INPUT_OUTPUT_FILE: ${{ inputs.output-file }}
+      run: |
+        if [ -n "$INPUT_OUTPUT_FILE" ]; then
+          path="$INPUT_OUTPUT_FILE"
+        else
+          path="$RUNNER_TEMP/tfreport-snippet.md"
+        fi
+        mkdir -p "$(dirname "$path")"
+        echo "path=$path" >> "$GITHUB_OUTPUT"
+
+    - name: Render
+      uses: BlackMesaLTD/tfreport/.github/action@${{ github.action_ref }}
+      with:
+        version:         ${{ inputs.version }}
+        target:          ${{ inputs.target }}
+        plan:            ${{ inputs.plan }}
+        plan-file:       ${{ inputs.plan-file }}
+        text-plan-file:  ${{ inputs.text-plan-file }}
+        label:           ${{ inputs.label }}
+        config:          ${{ inputs.config }}
+        changed-only:    ${{ inputs.changed-only }}
+        output-file:     ${{ steps.resolve.outputs.path }}
+
+    - name: Send
+      uses: BlackMesaLTD/tfreport/.github/action/send@${{ github.action_ref }}
+      with:
+        content-file:       ${{ steps.resolve.outputs.path }}
+        step-summary:       ${{ inputs.step-summary }}
+        pr-body-marker:     ${{ inputs.pr-body-marker }}
+        pr-comment-marker:  ${{ inputs.pr-comment-marker }}
+        github-token:       ${{ inputs.github-token }}
+        pr-number:          ${{ inputs.pr-number }}

@@ -1,0 +1,80 @@
+name: tfreport-download
+description: Download tfreport report artifacts (produced by tfreport-prepare matrix legs) and emit an inventory of the report files found
+author: Black Mesa Ltd
+
+# Stage 2 of the matrix pipeline (stage 1 is prepare, stage 3 is aggregate,
+# stage 4 is send). Thin wrapper around actions/download-artifact with
+# tfreport-opinionated defaults plus an inventory output that downstream
+# steps can use for empty-state handling without re-globbing.
+
+inputs:
+  pattern:
+    description: "Artifact name pattern (same glob syntax as actions/download-artifact). Default matches what tfreport-prepare uploads."
+    required: false
+    default: "tfreport-*"
+  path:
+    description: "Local directory to download artifacts into. Default: $RUNNER_TEMP/tfreport-downloads."
+    required: false
+    default: ""
+  report-filename:
+    description: "Filename inside each downloaded artifact containing the tfreport JSON. Matches tfreport-prepare's output."
+    required: false
+    default: "report.json"
+
+outputs:
+  count:
+    description: "Number of report files discovered across downloaded artifacts"
+    value: ${{ steps.inventory.outputs.count }}
+  reports:
+    description: "Newline-separated list of discovered report file paths"
+    value: ${{ steps.inventory.outputs.reports }}
+  path:
+    description: "Resolved download directory"
+    value: ${{ steps.resolve.outputs.path }}
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve path
+      id: resolve
+      shell: bash
+      env:
+        INPUT_PATH: ${{ inputs.path }}
+      run: |
+        if [ -z "$INPUT_PATH" ]; then
+          INPUT_PATH="$RUNNER_TEMP/tfreport-downloads"
+        fi
+        mkdir -p "$INPUT_PATH"
+        echo "path=$INPUT_PATH" >> "$GITHUB_OUTPUT"
+
+    - name: Download artifacts
+      uses: actions/download-artifact@v4
+      continue-on-error: true
+      with:
+        pattern: ${{ inputs.pattern }}
+        path: ${{ steps.resolve.outputs.path }}
+
+    - name: Inventory
+      id: inventory
+      shell: bash
+      env:
+        DL_PATH: ${{ steps.resolve.outputs.path }}
+        REPORT_FILENAME: ${{ inputs.report-filename }}
+      run: |
+        paths=""
+        if [ -d "$DL_PATH" ]; then
+          paths=$(find "$DL_PATH" -type f -name "$REPORT_FILENAME" 2>/dev/null | sort)
+        fi
+        if [ -z "$paths" ]; then
+          count=0
+        else
+          count=$(printf '%s\n' "$paths" | wc -l | tr -d ' ')
+        fi
+        {
+          echo "count=$count"
+          echo "reports<<TFR_EOF"
+          printf '%s' "$paths"
+          echo ""
+          echo "TFR_EOF"
+        } >> "$GITHUB_OUTPUT"
+        echo "Found $count report file(s) matching '$REPORT_FILENAME' under $DL_PATH"
