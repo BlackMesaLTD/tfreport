@@ -21,6 +21,13 @@ archives:
     format_overrides:
       - goos: windows
         format: zip
+    files:
+      - src: scripts/tfreport-from-plan.sh
+        dst: tfreport-from-plan
+        info:
+          mode: 0755
+      - LICENSE
+      - README.md
 
 checksum:
   name_template: checksums.txt

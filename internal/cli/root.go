@@ -35,15 +35,24 @@ var (
 
 var rootCmd = &cobra.Command{
 	Use:   "tfreport",
-	Short: "Transform Terraform plan JSON into human-readable reports",
+	Short: "Transform Terraform plans into human-readable reports",
 	Long: `tfreport is a general-purpose Terraform reporting tool that transforms
-plan JSON output into structured, human-readable reports for CI/CD pipelines.
+plan output into structured, human-readable reports for CI/CD pipelines.
 
-Usage:
-  terraform show -json plan.out | tfreport
+Best results — both JSON and text plan (step-summary and pr-comment targets
+render native per-resource text blocks only when text is supplied):
+  terraform show -json     plan.out > plan.json
+  terraform show -no-color plan.out > plan.txt
+  tfreport --plan-file plan.json --text-plan-file plan.txt --target github-step-summary
+
+Shortcut — the bundled wrapper does both terraform show calls for you:
+  tfreport-from-plan plan.out --target github-step-summary
+
+JSON-only (tables and counts; no per-resource text blocks):
   terraform show -json plan.out | tfreport --target github-pr-body
   tfreport --plan-file plan.json --target json
-  tfreport --plan-file plan.json --text-plan-file plan.txt --target github-step-summary
+
+Re-ingest a previously exported report (for cross-step pipeline composition):
   tfreport --report-file report.json --target github-step-summary`,
 	Version:       version,
 	SilenceUsage:  true,

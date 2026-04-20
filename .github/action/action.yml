@@ -1,0 +1,121 @@
+name: tfreport
+description: Transform Terraform plans into human-readable reports
+author: Black Mesa Ltd
+
+inputs:
+  version:
+    description: "tfreport version to install"
+    required: false
+    default: "latest"
+  target:
+    description: "Output target (markdown, github-pr-body, github-pr-comment, github-step-summary, json)"
+    required: false
+    default: "markdown"
+  plan:
+    description: "Path to terraform binary plan file (e.g. plan.out). Requires terraform on PATH. Mutually exclusive with plan-file."
+    required: false
+  plan-file:
+    description: "Path to pre-rendered terraform plan JSON. Mutually exclusive with plan."
+    required: false
+  text-plan-file:
+    description: "Path to pre-rendered terraform plan text output. Used alongside plan-file; ignored when plan is set (derived automatically)."
+    required: false
+  config:
+    description: "Path to .tf-report.yml config file"
+    required: false
+  changed-only:
+    description: "Show only changed resources"
+    required: false
+    default: "true"
+
+outputs:
+  report:
+    description: "The formatted report output"
+    value: ${{ steps.run.outputs.report }}
+
+runs:
+  using: composite
+  steps:
+    - name: Prepare inputs
+      shell: bash
+      env:
+        INPUT_PLAN: ${{ inputs.plan }}
+        INPUT_PLAN_FILE: ${{ inputs.plan-file }}
+        INPUT_TEXT_PLAN_FILE: ${{ inputs.text-plan-file }}
+      run: |
+        if [ -z "$INPUT_PLAN" ] && [ -z "$INPUT_PLAN_FILE" ]; then
+          echo "::error::tfreport action: exactly one of 'plan' or 'plan-file' must be provided"
+          exit 1
+        fi
+        if [ -n "$INPUT_PLAN" ] && [ -n "$INPUT_PLAN_FILE" ]; then
+          echo "::error::tfreport action: 'plan' and 'plan-file' are mutually exclusive"
+          exit 1
+        fi
+
+        if [ -n "$INPUT_PLAN" ]; then
+          if ! command -v terraform >/dev/null 2>&1; then
+            echo "::error::tfreport action: the 'plan' input requires terraform on PATH. Add 'hashicorp/setup-terraform@v3' before this step."
+            exit 1
+          fi
+          DERIVED=$(mktemp -d)
+          terraform show -json     "$INPUT_PLAN" > "$DERIVED/plan.json"
+          terraform show -no-color "$INPUT_PLAN" > "$DERIVED/plan.txt"
+          {
+            echo "TFREPORT_PLAN_FILE=$DERIVED/plan.json"
+            echo "TFREPORT_TEXT_PLAN_FILE=$DERIVED/plan.txt"
+          } >> "$GITHUB_ENV"
+        else
+          echo "TFREPORT_PLAN_FILE=$INPUT_PLAN_FILE" >> "$GITHUB_ENV"
+          if [ -n "$INPUT_TEXT_PLAN_FILE" ]; then
+            echo "TFREPORT_TEXT_PLAN_FILE=$INPUT_TEXT_PLAN_FILE" >> "$GITHUB_ENV"
+          fi
+        fi
+
+    - name: Install tfreport
+      shell: bash
+      env:
+        INPUT_VERSION: ${{ inputs.version }}
+      run: |
+        VERSION="$INPUT_VERSION"
+        if [ "$VERSION" = "latest" ]; then
+          VERSION=$(curl -s https://api.github.com/repos/BlackMesaLTD/tfreport/releases/latest | grep tag_name | cut -d '"' -f 4)
+        fi
+        VERSION="${VERSION#v}"
+        OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+        ARCH=$(uname -m)
+        case "$ARCH" in
+          x86_64) ARCH="amd64" ;;
+          aarch64) ARCH="arm64" ;;
+        esac
+        BASE_URL="https://github.com/BlackMesaLTD/tfreport/releases/download/v${VERSION}"
+        ARCHIVE="tfreport_${VERSION}_${OS}_${ARCH}.tar.gz"
+        curl -sL "${BASE_URL}/${ARCHIVE}" -o "/tmp/${ARCHIVE}"
+        curl -sL "${BASE_URL}/checksums.txt" -o /tmp/checksums.txt
+        cd /tmp && grep "${ARCHIVE}" checksums.txt | sha256sum --check --strict
+        tar xzf "/tmp/${ARCHIVE}" -C /usr/local/bin tfreport
+        chmod +x /usr/local/bin/tfreport
+        rm -f "/tmp/${ARCHIVE}" /tmp/checksums.txt
+
+    - name: Run tfreport
+      id: run
+      shell: bash
+      env:
+        INPUT_TARGET: ${{ inputs.target }}
+        INPUT_CONFIG: ${{ inputs.config }}
+        INPUT_CHANGED_ONLY: ${{ inputs.changed-only }}
+      run: |
+        ARGS=(--plan-file "$TFREPORT_PLAN_FILE" --target "$INPUT_TARGET")
+        if [ -n "${TFREPORT_TEXT_PLAN_FILE:-}" ]; then
+          ARGS+=(--text-plan-file "$TFREPORT_TEXT_PLAN_FILE")
+        fi
+        if [ -n "$INPUT_CONFIG" ]; then
+          ARGS+=(--config "$INPUT_CONFIG")
+        fi
+        if [ "$INPUT_CHANGED_ONLY" = "true" ]; then
+          ARGS+=(--changed-only)
+        fi
+        OUTPUT=$(tfreport "${ARGS[@]}")
+        echo "report<<TFREPORT_EOF" >> "$GITHUB_OUTPUT"
+        echo "$OUTPUT" >> "$GITHUB_OUTPUT"
+        echo "TFREPORT_EOF" >> "$GITHUB_OUTPUT"
+        echo "$OUTPUT"

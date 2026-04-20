@@ -1,10 +1,11 @@
 # tfreport
 
-Transform Terraform plan JSON into human-readable reports for CI/CD pipelines.
+Transform Terraform plans into human-readable reports for CI/CD pipelines.
 
 ## Features
 
-- **Plan JSON is the only required input** — works for any provider, any resource, zero config
+- **Works for any provider, any resource** — pure plan-format consumer, zero provider-specific assumptions
+- **Dual input** — combine plan JSON (structured diff, classification) with plan text (native per-resource output) for the richest reports
 - **Plain-English summaries** — groups changes and generates human-readable descriptions
 - **Multiple output targets** — markdown, GitHub PR body, PR comment, step summary, JSON
 - **Provider presets** — bundled display names + per-attribute metadata for azurerm (54 resource types)
@@ -15,22 +16,39 @@ Transform Terraform plan JSON into human-readable reports for CI/CD pipelines.
 
 ## Quick Start
 
+The richest output combines the two views of a plan — the structured JSON (for classification and diffs) and the native text output (for per-resource plan blocks that reviewers recognise at a glance).
+
 ```bash
-# Install
-go install github.com/BlackMesaLTD/tfreport/cmd/tfreport@latest
+# Easiest: the bundled wrapper derives both views from a plan.out and invokes tfreport
+tfreport-from-plan plan.out --target github-step-summary
 
-# Basic usage — pipe plan JSON, get markdown
-terraform show -json plan.out | tfreport
+# Manual equivalent: do both terraform show calls yourself
+terraform show -json     plan.out > plan.json
+terraform show -no-color plan.out > plan.txt
+tfreport --plan-file plan.json --text-plan-file plan.txt --target github-step-summary
+```
 
-# GitHub PR body with deploy checkboxes
+JSON-only modes (work fine, but step-summary / pr-comment lose their per-resource text blocks):
+
+```bash
+# Pipe plan JSON via stdin
 terraform show -json plan.out | tfreport --target github-pr-body
 
-# From file
-tfreport --plan-file plan.json --target github-step-summary
-
-# Structured JSON output
+# Canonical interchange JSON for programmatic consumers
 tfreport --plan-file plan.json --target json
 ```
+
+## Install
+
+**Prebuilt binary (recommended — includes `tfreport-from-plan`):** Download the archive for your platform from the [Releases page](https://github.com/BlackMesaLTD/tfreport/releases/latest) and extract both `tfreport` and `tfreport-from-plan` into your `$PATH`.
+
+**Via `go install` (`tfreport` only):**
+
+```bash
+go install github.com/BlackMesaLTD/tfreport/cmd/tfreport@latest
+```
+
+The `tfreport-from-plan` wrapper is a short shell script — if you go the `go install` route, copy [`scripts/tfreport-from-plan.sh`](scripts/tfreport-from-plan.sh) from this repo into your `$PATH` as well.
 
 ## Output Targets
 
@@ -125,19 +143,36 @@ presetgen --provider azurerm \
 
 ## GitHub Actions
 
+The composite action takes a terraform binary plan file and derives both JSON and text internally — you just need `hashicorp/setup-terraform` earlier in the workflow so `terraform` is on `PATH`:
+
 ```yaml
-- name: Generate report
-  run: |
-    terraform show -json plan.out | tfreport --target github-step-summary >> $GITHUB_STEP_SUMMARY
+- uses: hashicorp/setup-terraform@v3
+- run: terraform plan -out=plan.out
+- uses: BlackMesaLTD/tfreport/.github/action@v0
+  with:
+    plan: plan.out
+    target: github-step-summary
 ```
 
-Or use the composite action:
+If you already produce the JSON yourself, `plan-file` remains supported (pass `text-plan-file` alongside for the full output):
 
 ```yaml
 - uses: BlackMesaLTD/tfreport/.github/action@v0
   with:
     plan-file: plan.json
+    text-plan-file: plan.txt
     target: github-pr-body
+```
+
+Or skip the composite action entirely and shell out:
+
+```yaml
+- name: Generate report
+  run: |
+    terraform show -json     plan.out > plan.json
+    terraform show -no-color plan.out > plan.txt
+    tfreport --plan-file plan.json --text-plan-file plan.txt \
+             --target github-step-summary >> $GITHUB_STEP_SUMMARY
 ```
 
 ## CLI Reference
@@ -146,13 +181,26 @@ Or use the composite action:
 tfreport [flags]
 
 Flags:
-  -t, --target string      output target (default "markdown")
-  -f, --plan-file string   read plan JSON from file instead of stdin
-  -c, --config string      path to .tf-report.yml config file
-      --changed-only       show only changed resources (exclude no-ops)
-  -q, --quiet              suppress non-essential output
-  -v, --version            version for tfreport
-  -h, --help               help for tfreport
+  -t, --target string            output target (default "markdown")
+  -f, --plan-file string         read plan JSON from file instead of stdin
+      --text-plan-file string    path to terraform text plan output (from `terraform show -no-color plan.out`)
+      --report-file strings      read previously exported tfreport JSON (repeatable for multi-report aggregation)
+      --label string             subscription/environment label (stored in JSON export)
+  -c, --config string            path to .tf-report.yml config file
+      --changed-only             show only changed resources (exclude no-ops)
+  -q, --quiet                    suppress non-essential output
+  -v, --version                  version for tfreport
+  -h, --help                     help for tfreport
+```
+
+The `tfreport-from-plan` wrapper takes a terraform binary plan file and forwards remaining flags:
+
+```
+tfreport-from-plan <plan.out> [tfreport flags...]
+
+Environment:
+  TFREPORT_TERRAFORM_BIN   path to the terraform binary (default: terraform on PATH)
+  TFREPORT_BIN             path to the tfreport binary  (default: tfreport on PATH)
 ```
 
 ```
@@ -171,23 +219,26 @@ Flags:
 ## Architecture
 
 ```
-terraform show -json plan.out
-    │
-    ▼
-┌─────────────────────────────────┐
-│ Core Engine                     │
-│  Parser → Differ → Grouper     │
-│  → Classifier → Summarizer     │
-│  → Report                      │
-└───────────────┬─────────────────┘
-                │
-    ┌───────────┼───────────────┐
-    ▼           ▼               ▼
- Provider    Team Config     Output
- Presets     .tf-report.yml  Formatters
- (azurerm)   global_attrs    (5 targets)
-             resources
+terraform show -json     plan.out  ──┐
+terraform show -no-color plan.out  ──┤
+                                     ▼
+                       ┌─────────────────────────────────┐
+                       │ Core Engine                     │
+                       │  Parser → Differ → Grouper      │
+                       │  → Classifier → Summarizer      │
+                       │  → Report (+ text plan blocks)  │
+                       └───────────────┬─────────────────┘
+                                       │
+                          ┌────────────┼────────────┐
+                          ▼            ▼            ▼
+                       Provider    Team Config   Output
+                       Presets     .tf-report.yml Formatters
+                       (azurerm)   global_attrs   (5 targets)
+                                   resources
 ```
+
+The structured JSON powers grouping, diffing, classification, and summaries.
+The text plan supplies the native per-resource blocks that reviewers recognise from their terminal — only rendered by `github-step-summary` and `github-pr-comment` targets, and only when a text plan is supplied.
 
 ## License
 
