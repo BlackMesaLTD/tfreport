@@ -5,9 +5,11 @@ author: Black Mesa Ltd
 # Preset wiring the render + send primitives:
 #   tfreport/.github/action  →  tfreport/.github/action/send
 #
-# Inputs mirror the underlying primitives. Internal refs use
-# ${{ github.action_ref }} so the whole chain stays on whichever version
-# the consumer pinned this preset to.
+# Inputs mirror the underlying primitives. Internal refs are pinned to the
+# tfreport release version (currently v0.0.3) — composite actions do not
+# support expressions in `uses:`, so every release bump requires updating
+# the hardcoded refs in this file and report-matrix/action.yml before
+# cutting the tag.
 
 inputs:
   # Render inputs
@@ -82,7 +84,7 @@ runs:
         echo "path=$path" >> "$GITHUB_OUTPUT"
 
     - name: Render
-      uses: BlackMesaLTD/tfreport/.github/action@${{ github.action_ref }}
+      uses: BlackMesaLTD/tfreport/.github/action@v0.0.3
       with:
         version:         ${{ inputs.version }}
         target:          ${{ inputs.target }}
@@ -95,7 +97,7 @@ runs:
         output-file:     ${{ steps.resolve.outputs.path }}
 
     - name: Send
-      uses: BlackMesaLTD/tfreport/.github/action/send@${{ github.action_ref }}
+      uses: BlackMesaLTD/tfreport/.github/action/send@v0.0.3
       with:
         content-file:       ${{ steps.resolve.outputs.path }}
         step-summary:       ${{ inputs.step-summary }}
