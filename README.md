@@ -145,7 +145,18 @@ presetgen --provider azurerm \
 
 ## GitHub Actions
 
-The composite action takes a terraform binary plan file and derives both JSON and text internally — you just need `hashicorp/setup-terraform` earlier in the workflow so `terraform` is on `PATH`:
+Four composite actions under `.github/action/`, each with one job:
+
+| Path | Job |
+|---|---|
+| `action` | Render a single plan to output |
+| `action/prepare` | Per-sub matrix leg — export report JSON as an artifact |
+| `action/aggregate` | Cross-sub aggregation — combine N artifacts into one rendered output |
+| `action/deliver` | Ship a rendered snippet into a step summary, PR body section, and/or sticky PR comment |
+
+The render actions (`action`, `aggregate`) produce the markdown; `deliver` puts it somewhere. Chain them.
+
+#### Single plan
 
 ```yaml
 - uses: hashicorp/setup-terraform@v3
@@ -153,10 +164,16 @@ The composite action takes a terraform binary plan file and derives both JSON an
 - uses: BlackMesaLTD/tfreport/.github/action@v0
   with:
     plan: plan.out
-    target: github-step-summary
+    target: github-pr-body
+    output-file: snippet.md
+- uses: BlackMesaLTD/tfreport/.github/action/deliver@v0
+  with:
+    content-file: snippet.md
+    pr-body-marker: TFREPORT
+    github-token: ${{ secrets.GITHUB_TOKEN }}
 ```
 
-If you already produce the JSON yourself, `plan-file` remains supported (pass `text-plan-file` alongside for the full output):
+If you already produce the JSON yourself, `plan-file` and `text-plan-file` work the same on the render action:
 
 ```yaml
 - uses: BlackMesaLTD/tfreport/.github/action@v0
@@ -164,13 +181,12 @@ If you already produce the JSON yourself, `plan-file` remains supported (pass `t
     plan-file: plan.show.json
     text-plan-file: plan.show.txt
     target: github-pr-body
+    output-file: snippet.md
 ```
 
-### Multi-subscription workflows — `prepare` + `aggregate` sub-actions
+#### Multi-subscription matrix
 
-For matrix workflows planning N subscriptions or environments, use the two paired sub-actions instead of the top-level action. Each does one thing.
-
-**Inside the plan matrix** (one step per leg) — `tfreport-prepare` exports a per-sub report JSON and uploads it as an artifact:
+**Inside the plan matrix** — `tfreport-prepare` exports a per-sub report JSON and uploads it as an artifact:
 
 ```yaml
 - uses: BlackMesaLTD/tfreport/.github/action/prepare@v0
@@ -183,7 +199,7 @@ For matrix workflows planning N subscriptions or environments, use the two paire
 
 The uploaded artifact is named `tfreport-<label>` by default (override with `artifact-name`). Pass `upload: false` to keep the JSON local-only.
 
-**In a downstream job** — `tfreport-aggregate` downloads matching artifacts and renders the cross-sub summary:
+**In a downstream job** — aggregate then deliver:
 
 ```yaml
 - uses: BlackMesaLTD/tfreport/.github/action/aggregate@v0
@@ -192,11 +208,32 @@ The uploaded artifact is named `tfreport-<label>` by default (override with `art
     target: github-pr-body
     config: .tfreport.yml
     output-file: snippet.md
+- uses: BlackMesaLTD/tfreport/.github/action/deliver@v0
+  with:
+    content-file: snippet.md
+    pr-body-marker: TFREPORT
+    github-token: ${{ secrets.GITHUB_TOKEN }}
 ```
 
-Alternative if the report JSONs are already on disk (e.g. produced by another tool): pass `report-files: '_reports/*.json'` instead of `artifact-pattern`.
+Alternative if the report JSONs are already on disk: pass `report-files: '_reports/*.json'` to `aggregate` instead of `artifact-pattern`.
 
-For large renders (step-summary across many subs) use `output-file` — the file is always canonical; the step output is truncated to a marker string above the ~1 MB `GITHUB_OUTPUT` ceiling.
+#### `deliver` — destinations in detail
+
+Three optional destinations; any combination in a single call:
+
+| Input | Effect |
+|---|---|
+| `step-summary: 'true'` | Appends `content-file` to `$GITHUB_STEP_SUMMARY`. No token needed. |
+| `pr-body-marker: FOO` | Splices between `<!-- BEGIN_FOO -->` and `<!-- END_FOO -->` in the PR description. Appends the markers at the end if absent. Needs `github-token`. |
+| `pr-comment-marker: BAR` | Upserts a sticky PR comment identified by `<!-- BAR -->` at the start of the comment body. Creates on first run, edits the same comment thereafter. Needs `github-token`. |
+
+The PR number is auto-derived from `$GITHUB_EVENT_PATH` (handles both `pull_request` and `issue` events). Override with `pr-number` for unusual cases. Outside PR context, PR destinations log a warning and skip — non-fatal.
+
+Permissions required on the calling job for PR destinations: `pull-requests: write`.
+
+#### Token size / large renders
+
+Step output `report` is capped at ~1 MB by GitHub. `output-file` is always canonical — prefer it for step-summary renders across many subs.
 
 ### Bare shell equivalent
 

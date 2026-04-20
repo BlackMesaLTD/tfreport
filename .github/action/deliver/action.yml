@@ -1,0 +1,46 @@
+name: tfreport-deliver
+description: Deliver a rendered tfreport snippet to one or more GitHub destinations — step summary, PR body section, and/or sticky PR comment
+author: Black Mesa Ltd
+
+# Drop-in final step that follows either the render action or the aggregate
+# action. Each destination is an independent opt-in — any combination is
+# allowed in a single call.
+
+inputs:
+  content-file:
+    description: "Path to the file containing the rendered markdown to deliver"
+    required: true
+  step-summary:
+    description: "Append the content to $GITHUB_STEP_SUMMARY"
+    required: false
+    default: "false"
+  pr-body-marker:
+    description: "Splice the content between <!-- BEGIN_<marker> --> and <!-- END_<marker> --> in the PR body. Empty = skip."
+    required: false
+    default: ""
+  pr-comment-marker:
+    description: "Upsert a sticky PR comment identified by <!-- <marker> --> at the start of the comment body. Empty = skip."
+    required: false
+    default: ""
+  github-token:
+    description: "GitHub token (required when pr-body-marker or pr-comment-marker is set)"
+    required: false
+    default: ""
+  pr-number:
+    description: "PR number override. Empty = auto-derive from the triggering event ($GITHUB_EVENT_PATH: .pull_request.number or .issue.number)."
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Deliver
+      shell: bash
+      env:
+        INPUT_CONTENT_FILE: ${{ inputs.content-file }}
+        INPUT_STEP_SUMMARY: ${{ inputs.step-summary }}
+        INPUT_PR_BODY_MARKER: ${{ inputs.pr-body-marker }}
+        INPUT_PR_COMMENT_MARKER: ${{ inputs.pr-comment-marker }}
+        INPUT_GITHUB_TOKEN: ${{ inputs.github-token }}
+        INPUT_PR_NUMBER: ${{ inputs.pr-number }}
+      run: python3 "$GITHUB_ACTION_PATH/deliver.py"
