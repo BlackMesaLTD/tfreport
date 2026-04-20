@@ -1,6 +1,6 @@
 package config
 
-import "github.com/tfreport/tfreport/internal/core"
+import "github.com/BlackMesaLTD/tfreport/internal/core"
 
 // Config represents the .tf-report.yml configuration file.
 type Config struct {

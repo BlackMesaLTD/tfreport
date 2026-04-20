@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/tfreport/tfreport/internal/core"
+	"github.com/BlackMesaLTD/tfreport/internal/core"
 )
 
 // InstanceDetail renders per-module-instance detail sections: collapsible

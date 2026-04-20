@@ -17,7 +17,7 @@ Transform Terraform plan JSON into human-readable reports for CI/CD pipelines.
 
 ```bash
 # Install
-go install github.com/tfreport/tfreport/cmd/tfreport@latest
+go install github.com/BlackMesaLTD/tfreport/cmd/tfreport@latest
 
 # Basic usage — pipe plan JSON, get markdown
 terraform show -json plan.out | tfreport
@@ -114,7 +114,7 @@ The `presetgen` tool generates enriched preset JSON from Terraform provider docu
 
 ```bash
 # Install
-go install github.com/tfreport/tfreport/cmd/presetgen@latest
+go install github.com/BlackMesaLTD/tfreport/cmd/presetgen@latest
 
 # Generate from provider docs
 presetgen --provider azurerm \
@@ -134,7 +134,7 @@ presetgen --provider azurerm \
 Or use the composite action:
 
 ```yaml
-- uses: tfreport/tfreport/.github/action@v0
+- uses: BlackMesaLTD/tfreport/.github/action@v0
   with:
     plan-file: plan.json
     target: github-pr-body

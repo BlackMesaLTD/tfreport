@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/tfreport/tfreport/internal/core"
+	"github.com/BlackMesaLTD/tfreport/internal/core"
 )
 
 // Footer renders the closing section. On multi-report renders and on markdown

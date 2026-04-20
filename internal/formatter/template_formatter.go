@@ -1,10 +1,10 @@
 package formatter
 
 import (
-	"github.com/tfreport/tfreport/internal/core"
-	"github.com/tfreport/tfreport/internal/formatter/blocks"
-	"github.com/tfreport/tfreport/internal/formatter/template"
-	"github.com/tfreport/tfreport/internal/formatter/templates"
+	"github.com/BlackMesaLTD/tfreport/internal/core"
+	"github.com/BlackMesaLTD/tfreport/internal/formatter/blocks"
+	"github.com/BlackMesaLTD/tfreport/internal/formatter/template"
+	"github.com/BlackMesaLTD/tfreport/internal/formatter/templates"
 )
 
 // TemplateFormatter renders a report (or multiple reports) against a Go

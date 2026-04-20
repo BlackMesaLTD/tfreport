@@ -6,7 +6,7 @@ import (
 	"os"
 	"sort"
 
-	"github.com/tfreport/tfreport/internal/presets"
+	"github.com/BlackMesaLTD/tfreport/internal/presets"
 )
 
 // MergeOptions controls how presets are merged.

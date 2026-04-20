@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tfreport/tfreport/internal/core"
+	"github.com/BlackMesaLTD/tfreport/internal/core"
 )
 
 // syntheticReport builds a Report with the supplied module groups for use

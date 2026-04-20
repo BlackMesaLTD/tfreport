@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tfreport/tfreport/internal/core"
-	"github.com/tfreport/tfreport/internal/formatter/blocks"
+	"github.com/BlackMesaLTD/tfreport/internal/core"
+	"github.com/BlackMesaLTD/tfreport/internal/formatter/blocks"
 )
 
 var update = flag.Bool("update", false, "update golden files")

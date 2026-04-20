@@ -3,7 +3,7 @@ package formatter
 import (
 	"fmt"
 
-	"github.com/tfreport/tfreport/internal/core"
+	"github.com/BlackMesaLTD/tfreport/internal/core"
 )
 
 // Formatter formats a Report into a string for a specific output target.

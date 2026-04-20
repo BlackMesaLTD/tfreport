@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/tfreport/tfreport/internal/core"
+	"github.com/BlackMesaLTD/tfreport/internal/core"
 )
 
 // FleetHomogeneity answers "are all these reports identical?" across

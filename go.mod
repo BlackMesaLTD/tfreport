@@ -1,4 +1,4 @@
-module github.com/tfreport/tfreport
+module github.com/BlackMesaLTD/tfreport
 
 go 1.24.1
 

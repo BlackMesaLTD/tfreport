@@ -13,7 +13,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/tfreport/tfreport/internal/core"
+	"github.com/BlackMesaLTD/tfreport/internal/core"
 )
 
 // BlockContext carries the shared state needed to render any block. One

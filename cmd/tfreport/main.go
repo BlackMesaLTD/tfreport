@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/tfreport/tfreport/internal/cli"
+	"github.com/BlackMesaLTD/tfreport/internal/cli"
 )
 
 func main() {

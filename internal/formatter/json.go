@@ -1,7 +1,7 @@
 package formatter
 
 import (
-	"github.com/tfreport/tfreport/internal/core"
+	"github.com/BlackMesaLTD/tfreport/internal/core"
 )
 
 // JSONFormatter outputs the full report as structured JSON.

@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/tfreport/tfreport/internal/presets"
+	"github.com/BlackMesaLTD/tfreport/internal/presets"
 )
 
 func TestMerge_DocsOnly(t *testing.T) {

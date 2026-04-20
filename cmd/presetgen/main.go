@@ -6,8 +6,8 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/tfreport/tfreport/internal/presetgen"
-	"github.com/tfreport/tfreport/internal/presets"
+	"github.com/BlackMesaLTD/tfreport/internal/presetgen"
+	"github.com/BlackMesaLTD/tfreport/internal/presets"
 )
 
 var (

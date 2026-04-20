@@ -20,8 +20,8 @@ import (
 	"text/template"
 
 	sprig "github.com/Masterminds/sprig/v3"
-	"github.com/tfreport/tfreport/internal/core"
-	"github.com/tfreport/tfreport/internal/formatter/blocks"
+	"github.com/BlackMesaLTD/tfreport/internal/core"
+	"github.com/BlackMesaLTD/tfreport/internal/formatter/blocks"
 )
 
 // Engine renders user templates against the block registry.

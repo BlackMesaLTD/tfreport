@@ -3,7 +3,7 @@ package blocks
 import (
 	"fmt"
 
-	"github.com/tfreport/tfreport/internal/core"
+	"github.com/BlackMesaLTD/tfreport/internal/core"
 )
 
 // Title renders the report header. Grammar per target:
