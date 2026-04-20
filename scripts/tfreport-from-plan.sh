@@ -8,7 +8,7 @@
 #
 # Examples:
 #   tfreport-from-plan plan.out --target github-step-summary
-#   tfreport-from-plan plan.out --target github-pr-body --config .tf-report.yml
+#   tfreport-from-plan plan.out --target github-pr-body --config .tfreport.yml
 #
 # Environment:
 #   TFREPORT_TERRAFORM_BIN — path to the terraform binary (default: terraform from PATH)

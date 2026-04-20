@@ -248,4 +248,4 @@ blocks or to explicitly decide they'll stay as templates.
   default templates, and config syntax.
 - [docs/template-recipes.md](template-recipes.md) — the ready-made
   template library.
-- [docs/configuration.md](configuration.md) — `.tf-report.yml` schema.
+- [docs/configuration.md](configuration.md) — `.tfreport.yml` schema.

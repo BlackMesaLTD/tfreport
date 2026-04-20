@@ -62,7 +62,7 @@ Re-ingest a previously exported report (for cross-step pipeline composition):
 
 func init() {
 	rootCmd.Flags().StringVarP(&flagTarget, "target", "t", "markdown", "output target (markdown, github-pr-body, github-pr-comment, github-step-summary, json)")
-	rootCmd.Flags().StringVarP(&flagConfig, "config", "c", "", "path to .tf-report.yml config file")
+	rootCmd.Flags().StringVarP(&flagConfig, "config", "c", "", "path to .tfreport.yml config file")
 	rootCmd.Flags().StringVarP(&flagPlanFile, "plan-file", "f", "", "read plan JSON from file instead of stdin")
 	rootCmd.Flags().StringVar(&flagTextPlanFile, "text-plan-file", "", "path to terraform text plan output (terraform show -no-color plan.out)")
 	rootCmd.Flags().StringSliceVar(&flagReportFiles, "report-file", nil, "read previously exported tfreport JSON (repeatable for multi-report aggregation)")

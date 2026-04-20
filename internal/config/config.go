@@ -9,7 +9,7 @@ import (
 )
 
 // Load reads a config file from the given path. If path is empty, it searches
-// for .tf-report.yml or .tf-report.yaml in the current directory. Returns the
+// for .tfreport.yml or .tfreport.yaml in the current directory. Returns the
 // parsed config plus the directory of the resolved config file (or the CWD
 // when no config file was found). The directory is used as the sandbox root
 // for `{{ include }}` and for resolving template_file paths.
@@ -70,11 +70,11 @@ func validate(cfg Config) error {
 	return nil
 }
 
-// findConfig looks for .tf-report.yml in the current directory.
+// findConfig looks for .tfreport.yml in the current directory.
 func findConfig() string {
 	candidates := []string{
-		".tf-report.yml",
-		".tf-report.yaml",
+		".tfreport.yml",
+		".tfreport.yaml",
 	}
 
 	cwd, err := os.Getwd()

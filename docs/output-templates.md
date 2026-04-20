@@ -202,7 +202,7 @@ from the plan's `configuration.root_module.module_calls`).
 
 Rows are sorted by severity (destructive first), then alphabetical.
 
-If `.tf-report.yml` provides `module_descriptions_file`, a `Description`
+If `.tfreport.yml` provides `module_descriptions_file`, a `Description`
 column is inserted automatically.
 
 #### `group="subscription"` — per-report rows (multi-report only)
@@ -417,7 +417,7 @@ size limit)` marker appended.
 ### `changed_resources_table`
 
 Per-resource impact table — the `| Resource | Name | Changed | Impact |`
-table used inside instance dropdowns. Notes from `.tf-report.yml` resource
+table used inside instance dropdowns. Notes from `.tfreport.yml` resource
 or global attribute entries appear inline in the Impact column.
 
 **Template:**
@@ -779,7 +779,7 @@ Roughly 100 helpers are available; useful picks:
 ## `{{ include "path" }}`
 
 Inlines an external file, sandboxed to the directory of your
-`.tf-report.yml`. Absolute paths, `../` traversal, and symlink escapes are
+`.tfreport.yml`. Absolute paths, `../` traversal, and symlink escapes are
 refused.
 
 **Template:**
@@ -808,7 +808,7 @@ Paste into a `.tmpl` file anywhere under your repo — templates are
 sandboxed to the config-file directory, so `./.tfreport/step-summary.tmpl`
 or `./ci/pr-comment.tmpl` are both fine.
 
-**2. Wire it up.** Add one stanza to `.tf-report.yml`:
+**2. Wire it up.** Add one stanza to `.tfreport.yml`:
 
 ```yaml
 output:
@@ -851,7 +851,7 @@ before shipping.
 - **Inline (`template:` in YAML)** — up to ~5 lines. Anything longer
   gets awkward with YAML escaping.
 - **External file (`template_file: ./path`)** — anything larger. Path is
-  resolved relative to `.tf-report.yml`; absolute paths and `../`
+  resolved relative to `.tfreport.yml`; absolute paths and `../`
   traversal are refused.
 - Convention: we recommend `./.tfreport/<target>.tmpl` so custom templates
   are colocated with the config. But anywhere under the repo is fine.
@@ -875,7 +875,7 @@ default:
 
 ## Configuring a Target
 
-Add an `output.targets.<name>` block to `.tf-report.yml`. Three mutually
+Add an `output.targets.<name>` block to `.tfreport.yml`. Three mutually
 exclusive modes:
 
 ### Mode A — Section filter (no template knowledge required)

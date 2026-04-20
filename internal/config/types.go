@@ -2,7 +2,7 @@ package config
 
 import "github.com/BlackMesaLTD/tfreport/internal/core"
 
-// Config represents the .tf-report.yml configuration file.
+// Config represents the .tfreport.yml configuration file.
 type Config struct {
 	Presets                []string                   `yaml:"presets"`
 	Modules                map[string]ModuleConfig    `yaml:"modules"`

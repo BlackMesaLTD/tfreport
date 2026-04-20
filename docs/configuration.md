@@ -1,6 +1,6 @@
 # Configuration Reference
 
-tfreport is configured via `.tf-report.yml` (or `.tf-report.yaml`) in the repo root, or via `--config` flag.
+tfreport is configured via `.tfreport.yml` (or `.tfreport.yaml`) in the repo root, or via `--config` flag.
 
 All fields are optional. The tool works with zero config.
 
@@ -8,7 +8,7 @@ All fields are optional. The tool works with zero config.
 
 tfreport has two configuration surfaces. Knowing which one owns a given setting saves a lot of confusion.
 
-**`.tf-report.yml` owns:**
+**`.tfreport.yml` owns:**
 
 - **Domain knowledge** — what resources mean, how impacts are classified, what module names describe. (`presets`, `modules`, `global_attributes`, `resources`, `impact_defaults`)
 - **Global render defaults** — knobs that apply to every target unless overridden. (`output.max_resources_in_summary`, `output.code_format`, `output.step_summary_max_kb`, `output.group_submodules`, `output.submodule_depth`)

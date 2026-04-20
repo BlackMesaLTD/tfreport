@@ -21,7 +21,7 @@ inputs:
     description: "Path to pre-rendered terraform plan text output. Used alongside plan-file; ignored when plan is set (derived automatically)."
     required: false
   config:
-    description: "Path to .tf-report.yml config file"
+    description: "Path to .tfreport.yml config file"
     required: false
   changed-only:
     description: "Show only changed resources"

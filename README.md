@@ -11,7 +11,7 @@ Transform Terraform plans into human-readable reports for CI/CD pipelines.
 - **Provider presets** — bundled display names + per-attribute metadata for azurerm (54 resource types)
 - **Attribute-level impact** — global and per-resource-type overrides (e.g., tags = none)
 - **Preset generator** — `presetgen` tool parses provider docs to generate enriched presets
-- **Team config** — `.tf-report.yml` for module descriptions, attribute overrides, impact rules
+- **Team config** — `.tfreport.yml` for module descriptions, attribute overrides, impact rules
 - **Single binary** — zero runtime dependencies, installs in seconds
 
 ## Quick Start
@@ -78,7 +78,7 @@ Every non-JSON target is composed from user-overridable Go templates. Filter sec
 
 ## Configuration
 
-Create `.tf-report.yml` in your repo root. See [docs/configuration.md](docs/configuration.md) for the full reference.
+Create `.tfreport.yml` in your repo root. See [docs/configuration.md](docs/configuration.md) for the full reference.
 
 ```yaml
 presets:
@@ -186,7 +186,7 @@ Flags:
       --text-plan-file string    path to terraform text plan output (from `terraform show -no-color plan.out`)
       --report-file strings      read previously exported tfreport JSON (repeatable for multi-report aggregation)
       --label string             subscription/environment label (stored in JSON export)
-  -c, --config string            path to .tf-report.yml config file
+  -c, --config string            path to .tfreport.yml config file
       --changed-only             show only changed resources (exclude no-ops)
   -q, --quiet                    suppress non-essential output
   -v, --version                  version for tfreport
@@ -232,7 +232,7 @@ terraform show -no-color plan.out  ──┤
                           ┌────────────┼────────────┐
                           ▼            ▼            ▼
                        Provider    Team Config   Output
-                       Presets     .tf-report.yml Formatters
+                       Presets     .tfreport.yml Formatters
                        (azurerm)   global_attrs   (5 targets)
                                    resources
 ```

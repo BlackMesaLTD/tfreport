@@ -36,7 +36,7 @@ func loadReportWithLabel(t *testing.T, path, label string) *core.Report {
 
 // newFormatter returns a TemplateFormatter pre-wired with a zero-config
 // BlockContext so tests render identically to a CLI invocation without
-// .tf-report.yml.
+// .tfreport.yml.
 func newFormatter(t *testing.T, target string) *TemplateFormatter {
 	t.Helper()
 	f := NewTemplateFormatter(target)

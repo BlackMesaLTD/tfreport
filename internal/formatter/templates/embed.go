@@ -4,7 +4,7 @@
 //
 // The .tmpl files are intentionally small: heavy lifting is in blocks.
 // Users can override any target with their own template via
-// output.targets.<name>.template or .template_file in .tf-report.yml.
+// output.targets.<name>.template or .template_file in .tfreport.yml.
 package templates
 
 import _ "embed"

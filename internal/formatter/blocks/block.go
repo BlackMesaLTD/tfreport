@@ -65,7 +65,7 @@ type BlockContext struct {
 	// the same pool. nil means unlimited (blocks should guard).
 	TextBudget *TextPlanBudget
 
-	// ConfigDir is the directory of the resolved .tf-report.yml. Used by
+	// ConfigDir is the directory of the resolved .tfreport.yml. Used by
 	// {{ include }} to sandbox relative paths.
 	ConfigDir string
 }
