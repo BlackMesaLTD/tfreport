@@ -1,0 +1,16 @@
+{{/* block: title */}}
+{{ .Title }}
+
+{{/* block: cross_sub_table */}}
+{{ .CrossSubTable }}
+
+{{ range $r := .Reports }}
+<details><summary>{{ if $r.Label }}{{ $r.Label }}{{ else }}default{{ end }} — {{ $r.TotalResources }} resources, {{ $r.MaxImpact }} impact</summary>
+
+{{ range $kc := $r.KeyChanges }}- {{ $kc.Text }}
+{{ end }}
+</details>
+
+{{ end }}
+{{/* block: footer */}}
+{{ .Footer }}

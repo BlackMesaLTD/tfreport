@@ -1,0 +1,23 @@
+{{/* block: title */}}
+{{ .Title }}
+
+{{/* block: cross_sub_table */}}
+{{ .CrossSubTable }}
+
+{{/* block: deploy_checklist */}}
+{{ .DeployChecklist }}
+
+---
+
+{{ range $r := .Reports }}
+<details><summary>{{ if $r.Label }}{{ $r.Label }}{{ else }}default{{ end }} — {{ $r.TotalResources }} resources</summary>
+
+{{ if $r.KeyChanges }}**Key changes:**
+{{ range $kc := $r.KeyChanges }}- {{ $kc.Text }}
+{{ end }}
+{{ end }}
+</details>
+
+{{ end }}
+{{/* block: footer */}}
+{{ .Footer }}

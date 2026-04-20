@@ -1,0 +1,34 @@
+
+# Terraform Plan Report
+
+
+| Subscription | Resources | Impact | Actions |
+|--------------|-----------|--------|---------|
+| sub-a | 4 | ❗ high | 1 create, 2 update, 1 delete |
+| sub-b | 12 | ❗ high | 4 create, 6 update, 2 delete |
+
+
+## sub-a
+
+**4 resources**
+
+- ✅ New private endpoint: pe-web
+- ❗ Removing route: legacy-route
+- ⚠️ Tags updates across 2 subnets
+
+
+
+## sub-b
+
+**12 resources**
+
+- ✅ New private dns zone: privatelink.database.windows.net
+- ✅ New private dns zone virtual network link: vnet-link-main
+- ⚠️ Tags updates across 6 virtual network and subnet and network security group and route table
+- ✅ 2 new private endpoints
+- ❗ Removing 2 routes
+
+
+
+
+

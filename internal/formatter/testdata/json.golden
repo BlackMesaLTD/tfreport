@@ -1,0 +1,125 @@
+{
+  "module_groups": [
+    {
+      "name": "privatelink",
+      "path": "module.privatelink",
+      "action_counts": {
+        "create": 1
+      },
+      "changes": [
+        {
+          "address": "module.privatelink.azurerm_private_endpoint.web",
+          "module_path": "module.privatelink",
+          "resource_type": "azurerm_private_endpoint",
+          "resource_name": "web",
+          "action": "create",
+          "impact": "low",
+          "display_label": "pe-web",
+          "changed_attributes": [
+            {
+              "key": "location"
+            },
+            {
+              "key": "name"
+            },
+            {
+              "key": "tags"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "routes",
+      "path": "module.routes",
+      "action_counts": {
+        "delete": 1
+      },
+      "changes": [
+        {
+          "address": "module.routes.azurerm_route.legacy",
+          "module_path": "module.routes",
+          "resource_type": "azurerm_route",
+          "resource_name": "legacy",
+          "action": "delete",
+          "impact": "high",
+          "display_label": "legacy-route",
+          "changed_attributes": [
+            {
+              "key": "address_prefix"
+            },
+            {
+              "key": "name"
+            },
+            {
+              "key": "next_hop_type"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "virtual_network",
+      "path": "module.virtual_network",
+      "action_counts": {
+        "update": 2
+      },
+      "changes": [
+        {
+          "address": "module.virtual_network.azurerm_subnet.app",
+          "module_path": "module.virtual_network",
+          "resource_type": "azurerm_subnet",
+          "resource_name": "app",
+          "action": "update",
+          "impact": "medium",
+          "display_label": "app-subnet",
+          "changed_attributes": [
+            {
+              "key": "tags"
+            }
+          ]
+        },
+        {
+          "address": "module.virtual_network.azurerm_subnet.db",
+          "module_path": "module.virtual_network",
+          "resource_type": "azurerm_subnet",
+          "resource_name": "db",
+          "action": "update",
+          "impact": "medium",
+          "display_label": "db-subnet",
+          "changed_attributes": [
+            {
+              "key": "tags"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "key_changes": [
+    {
+      "text": "✅ New private endpoint: pe-web",
+      "impact": "low"
+    },
+    {
+      "text": "❗ Removing route: legacy-route",
+      "impact": "high"
+    },
+    {
+      "text": "⚠️ Tags updates across 2 subnets",
+      "impact": "medium"
+    }
+  ],
+  "total_resources": 4,
+  "action_counts": {
+    "create": 1,
+    "delete": 1,
+    "update": 2
+  },
+  "max_impact": "high",
+  "module_sources": {
+    "privatelink": "./modules/privatelink",
+    "routes": "./modules/routes",
+    "virtual_network": "./modules/virtual_network"
+  }
+}

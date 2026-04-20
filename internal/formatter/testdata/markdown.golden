@@ -1,0 +1,39 @@
+
+# Terraform Plan Report
+
+
+**4 resources** — Plan: 1 to add, 2 to change, 1 to destroy.
+
+
+## Key Changes
+
+- ✅ New private endpoint: pe-web
+- ❗ Removing route: legacy-route
+- ⚠️ Tags updates across 2 subnets
+
+
+## Modules
+
+### ✅ **privatelink** (1 resources: 1 create)
+
+| Resource | Action | Changed Attributes |
+|----------|--------|--------------------|
+| `azurerm_private_endpoint.web` | ✅ create | location, name, tags |
+
+
+### ❗ **routes** (1 resources: 1 delete)
+
+| Resource | Action | Changed Attributes |
+|----------|--------|--------------------|
+| `azurerm_route.legacy` | ❗ delete | address_prefix, name, next_hop_type |
+
+
+### ⚠️ **virtual_network** (2 resources: 2 update)
+
+| Resource | Action | Changed Attributes |
+|----------|--------|--------------------|
+| `azurerm_subnet.app` | ⚠️ update | tags |
+| `azurerm_subnet.db` | ⚠️ update | tags |
+
+
+
