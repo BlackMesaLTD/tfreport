@@ -1,0 +1,120 @@
+# tfreport configuration
+# Place as .tfreport.yml in your repository root
+#
+# Multi-subscription workflow:
+#   Step 1: tfreport --plan-file plan-a.json --label sub-a --target json > report-a.json
+#   Step 2: tfreport --plan-file plan-b.json --label sub-b --target json > report-b.json
+#   Aggregate: tfreport --report-file report-a.json --report-file report-b.json --target github-pr-body
+
+# Provider presets to load (bundled or file path)
+presets:
+  - azurerm
+
+# Module descriptions (team-specific context)
+# Inline — keyed by module group name:
+modules:
+  virtual_network:
+    description: "Managed VNet with subnets, NSGs, and route tables"
+  bootstrap:
+    description: "Base resource group, storage, and networking prerequisites"
+
+# Or external file — keyed by module type name (from source URL):
+# module_descriptions_file: module-descriptions.yml
+# File format (simple YAML map):
+#   bootstrap: "Base resource groups, storage, and networking prerequisites"
+#   virtual_network: "Managed VNet with subnets, NSGs, and route tables"
+
+# Global attribute overrides — apply to ALL resource types
+# If an update ONLY changes attributes listed here, the highest
+# listed impact is used instead of the action default.
+global_attributes:
+  tags:
+    impact: none
+    note: "Cosmetic only"
+
+# Per-resource-type attribute overrides — mirrors preset structure
+# These take priority over global_attributes for the specific resource type.
+resources:
+  azurerm_virtual_network:
+    display_name: "virtual network"  # override preset display name
+    attributes:
+      name:
+        impact: critical
+        note: "Forces replacement"
+      address_space:
+        impact: high
+  azurerm_subnet:
+    attributes:
+      address_prefixes:
+        impact: high
+        note: "Changes IP allocation"
+      delegation:
+        impact: high
+        note: "Triggers NSG redeployment in our modules"
+
+# Impact classification defaults (by action type)
+impact_defaults:
+  replace: critical
+  delete: high
+  update: medium
+  create: low
+
+# Output configuration
+#
+# Global knobs (apply to every target):
+output:
+  max_resources_in_summary: 50    # cap instances shown per step-summary section
+  group_submodules: false         # nest sub-modules as dropdowns within each instance
+  submodule_depth: 1              # levels of sub-module nesting (when group_submodules is true)
+  step_summary_max_kb: 800        # text plan budget in KB for github-step-summary (GitHub limit is 1024)
+  code_format: diff               # text plan code block format: diff (syntax highlighted), hcl (terraform), or plain
+
+  # Per-target customization. Each target block can combine:
+  #   - ONE template-selection mode (template / template_file / sections) — mutex
+  #   - Any number of knob overrides (code_format, max_resources_in_summary,
+  #     group_submodules, submodule_depth, step_summary_max_kb) — shadow the
+  #     matching global output.* value for this target only.
+  #
+  # (1) Section filter — drop or whitelist named sections from the default template.
+  #     See docs/output-templates.md for the block catalog.
+  targets:
+    github-pr-comment:
+      sections:
+        hide:
+          - footer
+      code_format: plain           # override output.code_format for this target
+
+  #   (2) Per-target knob overrides without a template change.
+  # targets:
+  #   github-step-summary:
+  #     step_summary_max_kb: 400   # tighter budget just here
+  #     group_submodules: true
+  #     submodule_depth: 2
+  #
+  #   (3) Inline template — use Go text/template syntax with Sprig helpers.
+  #       Exposed variables: .Title, .PlanCounts, .KeyChanges, .SummaryTable,
+  #       .DeployChecklist, .Footer, .Report (single) / .Reports (multi).
+  #       Parameterized blocks: summary_table, key_changes, instance_detail,
+  #       module_details, text_plan, changed_resources_table, deploy_checklist,
+  #       risk_histogram, diff_groups, fleet_homogeneity, glossary.
+  #       Most row-producing blocks (instance_detail, summary_table,
+  #       changed_resources_table) accept a `max` arg that overrides
+  #       output.max_resources_in_summary for that call.
+  #       Typo-safe helpers: action_count, import_count, sample, impact_is, action_is.
+  #       Files: {{ include "./relative/path.md" }} (sandboxed to this file's dir).
+  #
+  # targets:
+  #   github-pr-body:
+  #     template: |
+  #       {{ .Title }}
+  #
+  #       {{ key_changes "max" 10 }}
+  #
+  #       {{ .DeployChecklist }}
+  #
+  #       {{ include "./.github/approval-notes.md" }}
+  #
+  #   (4) External template file — resolved relative to this config file.
+  # targets:
+  #   github-step-summary:
+  #     template_file: ./.tfreport/step-summary.tmpl
