@@ -13,6 +13,11 @@ author: Black Mesa Ltd
 # the preset writes `empty-message` to the output file and still runs
 # send — so the PR body / step summary / sticky comment reflects
 # "no changes" rather than failing the job.
+#
+# Internal refs are pinned to the tfreport release version (currently
+# v0.0.3) — composite actions do not support expressions in `uses:`, so
+# every release bump requires updating the hardcoded refs in this file
+# and report-plan/action.yml before cutting the tag.
 
 inputs:
   # Download
@@ -90,14 +95,14 @@ runs:
 
     - name: Download
       id: download
-      uses: BlackMesaLTD/tfreport/.github/action/download@${{ github.action_ref }}
+      uses: BlackMesaLTD/tfreport/.github/action/download@v0.0.3
       with:
         pattern: ${{ inputs.artifact-pattern }}
         path:    ${{ inputs.artifact-path }}
 
     - name: Aggregate
       if: ${{ steps.download.outputs.count != '0' }}
-      uses: BlackMesaLTD/tfreport/.github/action/aggregate@${{ github.action_ref }}
+      uses: BlackMesaLTD/tfreport/.github/action/aggregate@v0.0.3
       with:
         version:       ${{ inputs.version }}
         target:        ${{ inputs.target }}
@@ -116,7 +121,7 @@ runs:
         printf '%s\n' "$EMPTY_MESSAGE" > "$OUTPUT_PATH"
 
     - name: Send
-      uses: BlackMesaLTD/tfreport/.github/action/send@${{ github.action_ref }}
+      uses: BlackMesaLTD/tfreport/.github/action/send@v0.0.3
       with:
         content-file:       ${{ steps.resolve.outputs.path }}
         step-summary:       ${{ inputs.step-summary }}
