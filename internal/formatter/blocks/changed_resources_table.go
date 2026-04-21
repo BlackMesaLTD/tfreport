@@ -91,4 +91,18 @@ func parseActionFilter(csv string) map[core.Action]struct{} {
 	return set
 }
 
+// Doc describes changed_resources_table for cmd/docgen. Will be expanded
+// in Phase 3a when this block gains `columns`, `impact`, `modules`,
+// `resource_types`, `module_types`, and `is_import` args.
+func (ChangedResourcesTable) Doc() BlockDoc {
+	return BlockDoc{
+		Name:    "changed_resources_table",
+		Summary: "Per-resource impact table (`| Resource | Name | Changed | Impact |`). Used inside github-step-summary instance dropdowns.",
+		Args: []ArgDoc{
+			{Name: "actions", Type: "csv", Default: "update,delete,replace", Description: "Filter by action. Use `all` to include create and read."},
+			{Name: "max", Type: "int", Default: "0 (no limit)", Description: "Cap number of rows. Hits emit a `… N more resources` marker."},
+		},
+	}
+}
+
 func init() { defaultRegistry.Register(ChangedResourcesTable{}) }

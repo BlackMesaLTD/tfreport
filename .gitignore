@@ -2,6 +2,7 @@
 /tfreport
 /presetgen
 /tfreport-preset-gen
+/docgen
 *.exe
 *.exe~
 *.dll

@@ -112,4 +112,17 @@ func firstWord(s string) string {
 	return s
 }
 
+// Doc describes risk_histogram for cmd/docgen.
+func (RiskHistogram) Doc() BlockDoc {
+	return BlockDoc{
+		Name:    "risk_histogram",
+		Summary: "Impact-level distribution across all resources in scope. Three visual styles (bar table, inline one-liner).",
+		Args: []ArgDoc{
+			{Name: "style", Type: "string", Default: "bar", Description: "One of `bar` (table with unicode bars), `table` (no bar column), `inline` (single line)."},
+			{Name: "include_none", Type: "bool", Default: "false", Description: "Include `impact=none` (no-op) in output."},
+			{Name: "max_bar", Type: "int", Default: "40", Description: "Cap bar length; counts above this truncate with a `+` marker."},
+		},
+	}
+}
+
 func init() { defaultRegistry.Register(RiskHistogram{}) }

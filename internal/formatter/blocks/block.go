@@ -88,10 +88,13 @@ type TextPlanBudget struct {
 
 // Block is the contract every section implementation satisfies. Render must
 // be pure aside from mutating ctx.TextBudget when relevant; concurrent render
-// is not required (templates are rendered serially).
+// is not required (templates are rendered serially). Doc returns the
+// structured metadata consumed by cmd/docgen to generate the user-facing
+// block reference.
 type Block interface {
 	Name() string
 	Render(ctx *BlockContext, args map[string]any) (string, error)
+	Doc() BlockDoc
 }
 
 // Registry is a name-indexed set of Blocks. Zero value is not usable; call

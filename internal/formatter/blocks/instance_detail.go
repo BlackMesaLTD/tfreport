@@ -397,4 +397,17 @@ func withChanges(ctx *BlockContext, changes []core.ResourceChange) *BlockContext
 	return &cp
 }
 
+// Doc describes instance_detail for cmd/docgen.
+func (InstanceDetail) Doc() BlockDoc {
+	return BlockDoc{
+		Name:    "instance_detail",
+		Summary: "Per-module-instance detail sections used by github-step-summary: collapsible headers wrapping impact tables plus text-plan or synthetic diffs.",
+		Args: []ArgDoc{
+			{Name: "show", Type: "csv", Default: "impact_table,diff", Description: "Which inner sections to include. Any subset of `impact_table,diff`."},
+			{Name: "group_submodules", Type: "bool", Default: "(from ctx.Output.GroupSubmodules)", Description: "Override config; when true, sub-modules render as nested <details>."},
+			{Name: "max", Type: "int", Default: "(from ctx.Output.MaxResourcesInSummary, else 50)", Description: "Cap number of instances shown. 0 means unlimited."},
+		},
+	}
+}
+
 func init() { defaultRegistry.Register(InstanceDetail{}) }

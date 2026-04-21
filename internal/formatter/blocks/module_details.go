@@ -97,4 +97,16 @@ func writeModuleDiffBlock(b *strings.Builder, ctx *BlockContext, mg core.ModuleG
 	b.WriteString("```\n\n")
 }
 
+// Doc describes module_details for cmd/docgen. Will be expanded in Phase 3b
+// when module_details gains the `format`, `columns`, and filter args.
+func (ModuleDetails) Doc() BlockDoc {
+	return BlockDoc{
+		Name:    "module_details",
+		Summary: "Per-module section: collapsible <details> (GitHub targets) or flat H3 (markdown) wrapping a resource table or per-resource diff block.",
+		Args: []ArgDoc{
+			{Name: "per_resource", Type: "bool", Default: "true for github-pr-comment, else false", Description: "When true, emits a ```diff code block with one line per resource instead of a resource table."},
+		},
+	}
+}
+
 func init() { defaultRegistry.Register(ModuleDetails{}) }

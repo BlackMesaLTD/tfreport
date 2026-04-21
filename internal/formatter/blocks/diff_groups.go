@@ -196,4 +196,16 @@ func plural(n int) string {
 	return "s"
 }
 
+// Doc describes diff_groups for cmd/docgen.
+func (DiffGroups) Doc() BlockDoc {
+	return BlockDoc{
+		Name:    "diff_groups",
+		Summary: "Collapses resources with identical change fingerprints into grouped rows. Single-report only; use fleet_homogeneity for cross-report uniformity.",
+		Args: []ArgDoc{
+			{Name: "threshold", Type: "int", Default: "2", Description: "Only collapse when group size ≥ threshold."},
+			{Name: "actions", Type: "csv", Default: "update,delete,replace", Description: "Which actions participate in fingerprint grouping."},
+		},
+	}
+}
+
 func init() { defaultRegistry.Register(DiffGroups{}) }

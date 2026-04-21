@@ -3,7 +3,7 @@
 
 
 | Module | Resources | Actions |
-|--------|-----------|---------|
+|---|---|---|
 | privatelink | 1 | 1 create |
 | routes | 1 | 1 delete |
 | virtual_network | 2 | 2 update |

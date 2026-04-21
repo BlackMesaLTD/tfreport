@@ -32,4 +32,12 @@ func (Footer) Render(ctx *BlockContext, _ map[string]any) (string, error) {
 	return strings.Join(lines, "\n"), nil
 }
 
+// Doc describes footer for cmd/docgen.
+func (Footer) Doc() BlockDoc {
+	return BlockDoc{
+		Name:    "footer",
+		Summary: "Closing credit line and data-source-read footnote. Target-aware; markdown renders minimal, GitHub targets add the generator credit.",
+	}
+}
+
 func init() { defaultRegistry.Register(Footer{}) }

@@ -94,4 +94,16 @@ func collectTextBlocks(ctx *BlockContext, filter []string) string {
 	return strings.Join(parts, "\n")
 }
 
+// Doc describes text_plan for cmd/docgen.
+func (TextPlan) Doc() BlockDoc {
+	return BlockDoc{
+		Name:    "text_plan",
+		Summary: "Native terraform plan text block, budget-aware. Truncates at newline boundaries when ctx.TextBudget would be exceeded.",
+		Args: []ArgDoc{
+			{Name: "addresses", Type: "csv", Default: "(all resources in report)", Description: "Restrict to these resource addresses; empty renders every address with a text block."},
+			{Name: "fence", Type: "string", Default: "(from ctx.Output.CodeFormat)", Description: "Override code fence language: `diff`, `hcl`, `terraform`, or any other for plain."},
+		},
+	}
+}
+
 func init() { defaultRegistry.Register(TextPlan{}) }

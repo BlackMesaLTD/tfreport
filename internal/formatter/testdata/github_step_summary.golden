@@ -5,7 +5,7 @@ Plan: 1 to add, 2 to change, 1 to destroy.
 
 
 | Module Type | Instances | Resources | Actions |
-|-------------|-----------|-----------|--------|
+|---|---|---|---|
 | routes | 1 | 1 | ❗ 1 delete |
 | virtual_network | 1 | 2 | ⚠️ 2 update |
 | privatelink | 1 | 1 | ✅ 1 create |
