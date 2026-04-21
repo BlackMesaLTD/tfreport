@@ -761,6 +761,52 @@ tfreport --plan-file plan.json --target json \
 - Multi-report mode (`tfreport --report-file x --report-file y --custom …`) errors — custom metadata is per-report and must be set at prepare time.
 - Nested values — values are plain strings. If you need structure, encode as JSON and `fromJson` in the template.
 
+### `.Preserved` — opt-in resource attribute values
+
+Per-resource attribute values pulled from terraform's `after` (fallback `before`) maps, gated through terraform's sensitivity mask. Populated via the CLI flag `--preserve <path>` (repeatable), config key `output.preserve_attributes`, or the `prepare` / `action` / `report-plan` composite actions' `preserve_attributes:` input. Accessed in templates as `{{ index $rc.Preserved "<path>" }}`.
+
+Unlike `.Custom` (report-level metadata supplied by the CALLER), `.Preserved` is resource-level data pulled from the plan itself — resource IDs, locations, tag values, etc. The allowlist is opt-in because the report JSON is deliberately lean; preserving every attribute would bloat artifacts.
+
+**CLI:**
+
+```bash
+tfreport --plan-file plan.show.json --target json \
+  --preserve id \
+  --preserve location \
+  --preserve tags.environment
+```
+
+**Composite action:**
+
+```yaml
+- uses: BlackMesaLTD/tfreport/.github/action/prepare@v0.1.0
+  with:
+    plan-file: ./plan.show.json
+    label: sub-alpha
+    preserve_attributes: |
+      id
+      location
+      tags.environment
+```
+
+**Template access:**
+
+```tmpl
+{{ range $mg := $r.ModuleGroups }}{{ range $rc := $mg.Changes }}
+- `{{ $rc.Address }}` →
+  id: `{{ index $rc.Preserved "id" | default "—" }}`,
+  location: `{{ index $rc.Preserved "location" | default "—" }}`
+{{ end }}{{ end }}
+```
+
+**Path syntax:** dotted paths walk into nested maps (`tags.environment` → `tags.environment`). Flat keys match the top level. Paths into list-of-objects (e.g. `rules.name`) are not supported in v1 — the path stops at the list boundary and returns absent.
+
+**Safety model:**
+- Sensitive-marked attributes (per terraform's `before_sensitive` / `after_sensitive`) are **absent** from `$rc.Preserved` — not rendered as `(sensitive)`. Use `{{ index $rc.Preserved "key" | default "—" }}` for a safe fallback.
+- A stderr warning is emitted at prepare time naming the path + resource address (but NEVER the value) when an allowlisted attr is skipped due to sensitivity.
+- Computed values (present in `after_unknown`) are preserved as the literal string `(known after apply)` — useful because on creates, every resource's `id` is computed.
+- Sensitive + computed: sensitive wins (absent).
+
 **`core.ResourceChange` fields** (iterated via `$mg.Changes`):
 
 ```go
@@ -772,8 +818,11 @@ Action            Action             // "create" | "update" | "delete" | "replac
 Impact            Impact
 IsImport          bool               // true when terraform's `importing` marker is set
 DisplayLabel      string             // pre-computed display label
-ChangedAttributes []ChangedAttribute // {Key, Description, OldValue, NewValue, Computed}
+ChangedAttributes []ChangedAttribute // {Key, Description, OldValue, NewValue, Computed, Sensitive}
+Preserved         map[string]any     // allowlisted attr values (see `.Preserved` section above)
 ```
+
+`ChangedAttribute.Sensitive` is true when terraform flagged the attr via `before_sensitive`/`after_sensitive`; `OldValue`/`NewValue` are already replaced with the literal string `(sensitive)` when Sensitive=true, so downstream formatters can render them verbatim without leaking secrets.
 
 See `internal/core/types.go` for the full schema including `ModuleGroup`
 and `ResourceChange`.

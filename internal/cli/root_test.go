@@ -99,6 +99,27 @@ func TestParseCustomFlags(t *testing.T) {
 	})
 }
 
+func TestResolvePreserveAttributes_cliWins(t *testing.T) {
+	got := resolvePreserveAttributes([]string{"id"}, []string{"location", "name"})
+	if len(got) != 1 || got[0] != "id" {
+		t.Errorf("CLI should win, got %v", got)
+	}
+}
+
+func TestResolvePreserveAttributes_emptyCliFallsBack(t *testing.T) {
+	got := resolvePreserveAttributes(nil, []string{"location", "name"})
+	if len(got) != 2 || got[0] != "location" || got[1] != "name" {
+		t.Errorf("empty CLI should use config, got %v", got)
+	}
+}
+
+func TestResolvePreserveAttributes_bothEmpty(t *testing.T) {
+	got := resolvePreserveAttributes(nil, nil)
+	if len(got) != 0 {
+		t.Errorf("both empty should be nil, got %v", got)
+	}
+}
+
 func TestApplyCustomFlags_mergesOntoEmpty(t *testing.T) {
 	r := &core.Report{}
 	if err := applyCustomFlags(r, []string{"sub_id=abc", "owner=me"}); err != nil {

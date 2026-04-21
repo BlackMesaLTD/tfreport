@@ -40,6 +40,7 @@ type resourceJSON struct {
 	IsImport          bool              `json:"is_import,omitempty"`
 	DisplayLabel      string            `json:"display_label,omitempty"`
 	ChangedAttributes []changedAttrJSON `json:"changed_attributes,omitempty"`
+	Preserved         map[string]any    `json:"preserved,omitempty"`
 }
 
 type changedAttrJSON struct {
@@ -127,6 +128,7 @@ func marshalResource(rc ResourceChange) resourceJSON {
 		Impact:       string(rc.Impact),
 		IsImport:     rc.IsImport,
 		DisplayLabel: rc.DisplayLabel,
+		Preserved:    rc.Preserved,
 	}
 	for _, attr := range rc.ChangedAttributes {
 		jr.ChangedAttributes = append(jr.ChangedAttributes, changedAttrJSON{
@@ -148,6 +150,7 @@ func unmarshalResource(jr resourceJSON) ResourceChange {
 		Impact:       Impact(jr.Impact),
 		IsImport:     jr.IsImport,
 		DisplayLabel: jr.DisplayLabel,
+		Preserved:    jr.Preserved,
 	}
 	for _, ja := range jr.ChangedAttributes {
 		rc.ChangedAttributes = append(rc.ChangedAttributes, ChangedAttribute{
