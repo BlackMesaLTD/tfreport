@@ -30,6 +30,7 @@ var (
 	flagReportFiles  []string
 	flagLabel        string
 	flagCustom       []string
+	flagPreserve     []string
 	flagChangedOnly  bool
 	flagQuiet        bool
 )
@@ -69,6 +70,7 @@ func init() {
 	rootCmd.Flags().StringSliceVar(&flagReportFiles, "report-file", nil, "read previously exported tfreport JSON (repeatable for multi-report aggregation)")
 	rootCmd.Flags().StringVar(&flagLabel, "label", "", "subscription/environment label (stored in JSON export)")
 	rootCmd.Flags().StringArrayVar(&flagCustom, "custom", nil, "custom key=value metadata (repeatable). Accessible in templates as {{ $r.Custom.<key> }}")
+	rootCmd.Flags().StringArrayVar(&flagPreserve, "preserve", nil, "attribute path to preserve on each resource (repeatable). Dotted paths walk nested maps. Sensitive-marked attrs are never preserved. Accessible as {{ $rc.Preserved.<path> }}")
 	rootCmd.Flags().BoolVar(&flagChangedOnly, "changed-only", false, "show only changed resources (exclude no-ops)")
 	rootCmd.Flags().BoolVarP(&flagQuiet, "quiet", "q", false, "suppress non-essential output")
 }
@@ -310,6 +312,16 @@ func applyCustomFlags(report *core.Report, flags []string) error {
 	return nil
 }
 
+// resolvePreserveAttributes merges --preserve CLI flags with the
+// output.preserve_attributes config list. CLI wins when both are set
+// (per DEC-1c / REQ-2). An empty CLI flag falls back to the config list.
+func resolvePreserveAttributes(cliFlags, cfgList []string) []string {
+	if len(cliFlags) > 0 {
+		return cliFlags
+	}
+	return cfgList
+}
+
 // parseCustomFlags converts a slice of "key=value" strings from the
 // --custom flag into a map. Empty input returns nil. Entries without an
 // `=` return a helpful error naming the offending entry; empty keys are
@@ -413,8 +425,12 @@ func buildReportFromPlan(cfg config.Config) (*core.Report, error) {
 	}
 
 	opts := core.ReportOptions{
-		ChangedOnly:     flagChangedOnly,
-		ImpactOverrides: cfg.ImpactOverrides(),
+		ChangedOnly:        flagChangedOnly,
+		ImpactOverrides:    cfg.ImpactOverrides(),
+		PreserveAttributes: resolvePreserveAttributes(flagPreserve, cfg.Output.PreserveAttributes),
+		Warn: func(msg string) {
+			fmt.Fprintln(os.Stderr, msg)
+		},
 	}
 
 	if len(cfg.Presets) > 0 {

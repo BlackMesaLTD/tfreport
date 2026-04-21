@@ -38,6 +38,7 @@ type OutputConfig struct {
 	StepSummaryMaxKB      int                     `yaml:"step_summary_max_kb"`
 	CodeFormat            string                  `yaml:"code_format"`
 	ChangedAttrsDisplay   string                  `yaml:"changed_attrs_display"`
+	PreserveAttributes    []string                `yaml:"preserve_attributes"`
 	Targets               map[string]TargetConfig `yaml:"targets"`
 }
 

@@ -498,6 +498,68 @@ for a block.
 
 ---
 
+## Resource ID in the PR body summary
+
+**Who:** reviewer who wants to jump from a PR comment straight to an Azure
+portal / AWS console resource. Needs the resource ID visible inline,
+without clicking through to a step summary.
+
+**Scenario:** surgical change to 1–3 specific resources; reviewer already
+knows what's changing and just wants the IDs for investigation.
+
+**Prerequisite:** the `prepare` step opts in the `id` attribute via
+`preserve_attributes`. Available from `@v0.1.0+`:
+
+```yaml
+- uses: BlackMesaLTD/tfreport/.github/action/prepare@v0.1.0
+  with:
+    plan-file: ./subscriptions/${{ matrix.subscription }}/plan.show.json
+    text-plan-file: ./subscriptions/${{ matrix.subscription }}/plan.show.txt
+    label: ${{ matrix.subscription }}
+    config: .tfreport.yml
+    preserve_attributes: |
+      id
+      location
+```
+
+**The template:**
+
+```yaml
+output:
+  targets:
+    github-pr-body:
+      template: |
+        {{- range $r := .Reports }}
+        ## {{ $r.Label }} — {{ $r.TotalResources }} changes
+        {{ range $mg := $r.ModuleGroups -}}{{ range $rc := $mg.Changes }}
+        - `{{ $rc.Address }}` · id: `{{ index $rc.Preserved "id" | default "—" }}` · location: `{{ index $rc.Preserved "location" | default "—" }}`
+        {{- end }}{{ end }}
+        {{- end }}
+```
+
+**Renders (example):**
+
+```
+## sub-alpha — 2 changes
+
+- `module.vnet.azurerm_subnet.app` · id: `/subscriptions/aaa/…/subnets/app` · location: `uksouth`
+- `module.vnet.azurerm_subnet.new` · id: `(known after apply)` · location: `uksouth`
+```
+
+On the create row, `id` is computed so the template renders the
+`(known after apply)` sentinel automatically. If the resource had a
+sensitive attribute on the allowlist (e.g. a provider marks `id` as
+sensitive for some secret-holding resource type), that attr would be
+absent and the `| default "—"` fallback kicks in cleanly — no secret leak.
+
+**Gaps exposed:** none — `--preserve` with the sensitivity gate is the
+purpose-built tool for this recipe. Before it existed, exposing IDs
+required an out-of-band `jq` step in the workflow that munged plan JSON
+and passed values via `custom:` (one-value-per-subscription, one-attr-per-
+resource), which scaled poorly beyond a couple of IDs.
+
+---
+
 ## Newer blocks worth knowing
 
 Beyond the blocks the recipes above reference, tfreport ships a handful

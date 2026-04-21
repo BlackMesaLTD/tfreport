@@ -403,6 +403,113 @@ func TestSensitiveOmittedFromJSONWhenFalse(t *testing.T) {
 	}
 }
 
+// --- Layer 2: Preserved round-trip ---
+
+func TestPreservedRoundTrip(t *testing.T) {
+	// Run GenerateReport with PreserveAttributes on the sensitive fixture;
+	// assert the resulting JSON contains non-sensitive preserved values
+	// AND never contains LEAK_CANARY sentinels.
+	data, err := os.ReadFile("../../testdata/sensitive_plan.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var warnings []string
+	report, err := GenerateReport(data, ReportOptions{
+		ChangedOnly:        false,
+		PreserveAttributes: []string{"id", "location", "password", "tags.env", "tags.secret_key"},
+		Warn:               func(m string) { warnings = append(warnings, m) },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Find the password_store resource — `id` and `location` preserved, password absent.
+	var ps *ResourceChange
+	for _, mg := range report.ModuleGroups {
+		for i := range mg.Changes {
+			if mg.Changes[i].Address == "mock_secret_holder.password_store" {
+				ps = &mg.Changes[i]
+			}
+		}
+	}
+	if ps == nil {
+		t.Fatal("password_store resource missing from report")
+	}
+	if ps.Preserved["id"] != "store-1" {
+		t.Errorf("id should be preserved: %v", ps.Preserved["id"])
+	}
+	if _, ok := ps.Preserved["password"]; ok {
+		t.Error("sensitive password must NOT be in Preserved")
+	}
+
+	// Warning emitted for sensitive skip.
+	foundWarn := false
+	for _, w := range warnings {
+		if strings.Contains(w, "password") && strings.Contains(w, "mock_secret_holder.password_store") {
+			foundWarn = true
+		}
+	}
+	if !foundWarn {
+		t.Errorf("expected warning for sensitive password skip; warnings=%v", warnings)
+	}
+
+	// JSON round-trip: no LEAK_CANARY sentinels, Preserved survives.
+	marshaled, err := MarshalReport(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, canary := range []string{"LEAK_CANARY_OLD", "LEAK_CANARY_NEW", "LEAK_CANARY_NESTED_OLD", "LEAK_CANARY_NESTED_NEW", "LEAK_CANARY_LIST_OLD", "LEAK_CANARY_LIST_NEW"} {
+		if strings.Contains(string(marshaled), canary) {
+			t.Errorf("canary %q leaked into Preserved JSON output", canary)
+		}
+	}
+	if !strings.Contains(string(marshaled), `"preserved":`) {
+		t.Error("JSON should contain 'preserved' key")
+	}
+
+	restored, err := UnmarshalReport(marshaled)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var restoredPS *ResourceChange
+	for _, mg := range restored.ModuleGroups {
+		for i := range mg.Changes {
+			if mg.Changes[i].Address == "mock_secret_holder.password_store" {
+				restoredPS = &mg.Changes[i]
+			}
+		}
+	}
+	if restoredPS == nil || restoredPS.Preserved["id"] != "store-1" {
+		t.Error("restored Preserved.id missing")
+	}
+}
+
+func TestPreservedOmittedFromJSONWhenEmpty(t *testing.T) {
+	// Empty Preserved → key absent via omitempty.
+	report := &Report{
+		TotalResources: 1,
+		ActionCounts:   map[Action]int{ActionCreate: 1},
+		MaxImpact:      ImpactLow,
+		ModuleGroups: []ModuleGroup{
+			{
+				Name: "m", Path: "module.m",
+				ActionCounts: map[Action]int{ActionCreate: 1},
+				Changes: []ResourceChange{
+					{Address: "a", Action: ActionCreate, Impact: ImpactLow},
+				},
+			},
+		},
+	}
+	marshaled, err := MarshalReport(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(marshaled), `"preserved":`) {
+		t.Errorf("empty Preserved should be omitted, got:\n%s", marshaled)
+	}
+}
+
 func TestLegacyReportBackwardCompat(t *testing.T) {
 	// Load a legacy report JSON (no 'sensitive' / 'preserved' fields) and
 	// confirm it parses cleanly — Sensitive defaults to false, Custom nil,

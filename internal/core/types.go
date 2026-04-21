@@ -74,7 +74,19 @@ type ResourceChange struct {
 	AfterUnknown      map[string]any
 	BeforeSensitive   any
 	AfterSensitive    any
+
+	// Preserved carries user-allowlisted attribute values (via
+	// ReportOptions.PreserveAttributes / CLI --preserve) that survive
+	// the JSON round-trip. Sensitive-marked attrs are NEVER preserved —
+	// they're absent from this map regardless of the allowlist. Computed
+	// (known after apply) values are preserved as the literal string
+	// KnownAfterApply.
+	Preserved map[string]any
 }
+
+// KnownAfterApply is the sentinel string stored in Preserved when the
+// allowlisted attribute's value is computed (present in AfterUnknown).
+const KnownAfterApply = "(known after apply)"
 
 // ModuleGroup represents grouped changes for a module.
 type ModuleGroup struct {

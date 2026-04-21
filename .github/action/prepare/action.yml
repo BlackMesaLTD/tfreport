@@ -56,6 +56,26 @@ inputs:
           sub_id: 00000000-0000-0000-0000-000000000001
           owner: platform-team
     required: false
+  preserve_attributes:
+    description: |
+      Opt-in allowlist of resource attribute paths to preserve on each
+      ResourceChange (one path per line). Preserved values survive the JSON
+      round-trip and are accessible in templates as
+      `{{ index $rc.Preserved "<path>" }}`.
+
+      Dotted paths walk into nested maps (e.g. `tags.environment`).
+      Sensitive-marked attrs (per terraform's `before_sensitive` /
+      `after_sensitive`) are NEVER preserved, regardless of this list — a
+      warning is logged to stderr when such a skip happens. Computed
+      (known-after-apply) values are preserved as the literal string
+      `(known after apply)`.
+
+      Example:
+        preserve_attributes: |
+          id
+          location
+          tags.environment
+    required: false
   artifact-name:
     description: "Name of the uploaded artifact. Defaults to tfreport-<label>."
     required: false
@@ -129,6 +149,7 @@ runs:
         INPUT_CHANGED_ONLY: ${{ inputs.changed-only }}
         INPUT_ARTIFACT_NAME: ${{ inputs.artifact-name }}
         INPUT_CUSTOM: ${{ inputs.custom }}
+        INPUT_PRESERVE: ${{ inputs.preserve_attributes }}
       run: |
         if [ -z "$INPUT_LABEL" ]; then
           echo "::error::tfreport-prepare: 'label' is required"
@@ -165,6 +186,13 @@ runs:
           bash "$GITHUB_ACTION_PATH/../../../scripts/parse-custom-input.sh"
         )
         ARGS+=("${CUSTOM_ARGS[@]}")
+
+        # Translate the YAML-block `preserve_attributes:` input into repeated --preserve flags.
+        mapfile -t PRESERVE_ARGS < <(
+          TFREPORT_INPUT_PRESERVE="$INPUT_PRESERVE" \
+          bash "$GITHUB_ACTION_PATH/../../../scripts/parse-preserve-input.sh"
+        )
+        ARGS+=("${PRESERVE_ARGS[@]}")
 
         tfreport "${ARGS[@]}" > "$REPORT_FILE"
 

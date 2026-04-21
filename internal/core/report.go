@@ -32,6 +32,14 @@ func GenerateReport(planJSON []byte, opts ReportOptions) (*Report, error) {
 		}
 	}
 
+	// Step 3c: Preserve allowlisted attribute values (Layer 2 — gated by
+	// sensitivity; see preserve.go).
+	if len(opts.PreserveAttributes) > 0 {
+		for i := range changes {
+			PreserveAttributes(&changes[i], opts.PreserveAttributes, opts.Warn)
+		}
+	}
+
 	// Step 4: Classify impact
 	ClassifyImpact(changes, opts.ImpactOverrides, opts.AttributeResolver)
 
@@ -94,6 +102,17 @@ type ReportOptions struct {
 	ModuleDescriptions  map[string]string
 	DisplayNames        map[string]string
 	DescriptionResolver func(resourceType, attrName string) string
+
+	// PreserveAttributes is the opt-in allowlist of attribute paths to
+	// preserve on each ResourceChange. Dotted paths walk into nested maps
+	// (e.g. "tags.environment"). Sensitive-marked attrs are never preserved
+	// regardless of this list. See preserve.go for full semantics.
+	PreserveAttributes []string
+
+	// Warn is called once per allowlisted-but-sensitive attribute skipped
+	// during preservation. Defaults to a no-op when nil. CLI wires this
+	// to log.Println so warnings surface on stderr.
+	Warn func(msg string)
 }
 
 // deduplicateKeyChanges collapses repeated sentences. If the same Text

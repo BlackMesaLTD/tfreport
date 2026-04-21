@@ -164,6 +164,7 @@ key under `output.targets.<name>.<knob>`. Supported overrides:
 - `submodule_depth`
 - `step_summary_max_kb`
 - `changed_attrs_display`
+- `preserve_attributes`
 
 Resolution order (highest wins):
 
@@ -171,6 +172,28 @@ Resolution order (highest wins):
 2. `output.targets.<target>.<knob>` (per-target override)
 3. `output.<knob>` (global default)
 4. Hardcoded fallback (e.g. 50 for max, 800 KB for budget, `"diff"` for code_format, `"dash"` for changed_attrs_display)
+
+### `preserve_attributes`
+
+List of resource attribute paths to preserve on each `ResourceChange`, opt-in. Preserved values survive the JSON round-trip and are accessible in templates as `{{ index $rc.Preserved "<path>" }}`. Dotted paths walk nested maps.
+
+```yaml
+output:
+  preserve_attributes:
+    - id
+    - location
+    - tags.environment
+```
+
+**Safety model** (defence-in-depth):
+
+- Sensitive-marked attrs (per terraform's `before_sensitive`/`after_sensitive`) are **never preserved**, regardless of the allowlist. A stderr warning is emitted when such a skip happens.
+- Computed (known-after-apply) values are preserved as the literal string `(known after apply)`.
+- Sensitive wins over computed: a sensitive computed attr is absent (not sentinelled).
+
+CLI `--preserve key` overrides the config list when both are specified.
+
+See also: `docs/output-templates.md` — the `.Preserved` section of the raw-data escape hatch for template patterns.
 
 ### `changed_attrs_display`
 

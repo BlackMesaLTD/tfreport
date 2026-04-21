@@ -54,6 +54,21 @@ inputs:
           owner: platform-team
           environment: prod
     required: false
+  preserve_attributes:
+    description: |
+      Opt-in allowlist of resource attribute paths to preserve on each
+      ResourceChange (one path per line). Preserved values are accessible
+      in templates as `{{ index $rc.Preserved "<path>" }}`.
+
+      Dotted paths walk into nested maps (e.g. `tags.environment`).
+      Sensitive-marked attrs are NEVER preserved; a warning is logged to
+      stderr when skipped. Computed values become `(known after apply)`.
+
+      Example:
+        preserve_attributes: |
+          id
+          location
+    required: false
   output-file:
     description: "Optional file path to persist the rendered output to. The preset always writes to a temp path regardless; use this to keep a copy at a known location."
     required: false
@@ -155,6 +170,7 @@ runs:
         INPUT_CHANGED_ONLY:    ${{ inputs.changed-only }}
         INPUT_LABEL:           ${{ inputs.label }}
         INPUT_CUSTOM:          ${{ inputs.custom }}
+        INPUT_PRESERVE:        ${{ inputs.preserve_attributes }}
         PLAN_FILE:             ${{ steps.prep.outputs.plan_file }}
         TEXT_PLAN_FILE:        ${{ steps.prep.outputs.text_plan_file }}
         OUTPUT_PATH:           ${{ steps.resolve.outputs.path }}
@@ -179,6 +195,13 @@ runs:
           bash "$GITHUB_ACTION_PATH/../../../scripts/parse-custom-input.sh"
         )
         ARGS+=("${CUSTOM_ARGS[@]}")
+
+        # Translate the YAML-block `preserve_attributes:` input into repeated --preserve flags.
+        mapfile -t PRESERVE_ARGS < <(
+          TFREPORT_INPUT_PRESERVE="$INPUT_PRESERVE" \
+          bash "$GITHUB_ACTION_PATH/../../../scripts/parse-preserve-input.sh"
+        )
+        ARGS+=("${PRESERVE_ARGS[@]}")
 
         tfreport "${ARGS[@]}" > "$OUTPUT_PATH"
         echo "Wrote $(wc -c < "$OUTPUT_PATH") bytes to $OUTPUT_PATH"
