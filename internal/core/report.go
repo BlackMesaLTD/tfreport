@@ -19,7 +19,7 @@ func GenerateReport(planJSON []byte, opts ReportOptions) (*Report, error) {
 	// Step 3: Diff each resource's before/after
 	for i := range changes {
 		rc := &changes[i]
-		rc.ChangedAttributes = Diff(rc.Before, rc.After, rc.AfterUnknown)
+		rc.ChangedAttributes = Diff(rc.Before, rc.After, rc.AfterUnknown, rc.BeforeSensitive, rc.AfterSensitive)
 	}
 
 	// Step 3b: Populate attribute descriptions from presets

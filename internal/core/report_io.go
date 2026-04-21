@@ -45,6 +45,7 @@ type resourceJSON struct {
 type changedAttrJSON struct {
 	Key         string `json:"key"`
 	Description string `json:"description,omitempty"`
+	Sensitive   bool   `json:"sensitive,omitempty"`
 }
 
 // MarshalReport serializes a Report to JSON.
@@ -131,6 +132,7 @@ func marshalResource(rc ResourceChange) resourceJSON {
 		jr.ChangedAttributes = append(jr.ChangedAttributes, changedAttrJSON{
 			Key:         attr.Key,
 			Description: attr.Description,
+			Sensitive:   attr.Sensitive,
 		})
 	}
 	return jr
@@ -151,6 +153,7 @@ func unmarshalResource(jr resourceJSON) ResourceChange {
 		rc.ChangedAttributes = append(rc.ChangedAttributes, ChangedAttribute{
 			Key:         ja.Key,
 			Description: ja.Description,
+			Sensitive:   ja.Sensitive,
 		})
 	}
 	return rc
