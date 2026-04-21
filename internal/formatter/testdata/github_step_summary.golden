@@ -19,7 +19,7 @@ Plan: 1 to add, 2 to change, 1 to destroy.
 
 | Resource | Name | Changed | Impact |
 |---|---|---|---|
-| route | legacy-route | `address_prefix`, `name`, `next_hop_type` | 🔴 high |
+| route | legacy-route | — | 🔴 high |
 
 ```diff
 - route: legacy-route

@@ -78,6 +78,13 @@ type OutputOptions struct {
 	SubmoduleDepth        int
 	StepSummaryMaxKB      int
 	CodeFormat            string
+
+	// ChangedAttrsDisplay picks how the per-resource "Changed" cell renders
+	// for create and delete actions (update/replace always render the
+	// keys-list). Valid values: "dash" (default), "wordy" (new/removed),
+	// "count" (N attrs), "list" (legacy full keys-list). Empty string is
+	// treated as "dash". Blocks validate and per-block args can override.
+	ChangedAttrsDisplay string
 }
 
 // TextPlanBudget is a mutable byte-budget shared across all text_plan block

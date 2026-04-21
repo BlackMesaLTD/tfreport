@@ -65,6 +65,12 @@ func (ModulesTable) Render(ctx *BlockContext, args map[string]any) (string, erro
 	max := ArgInt(args, "max", 0)
 	empty := ArgString(args, "empty", "—")
 
+	changedMode := ArgString(args, "changed_attrs_display", "")
+	if err := validChangedAttrsMode("modules_table", changedMode); err != nil {
+		return "", err
+	}
+	changedMode = resolveChangedAttrsMode(ctx, changedMode)
+
 	for _, c := range cols {
 		if _, ok := moduleColumns[c]; !ok {
 			return "", fmt.Errorf("modules_table: unknown column %q (valid: %s)",
@@ -95,7 +101,7 @@ func (ModulesTable) Render(ctx *BlockContext, args map[string]any) (string, erro
 	for _, mg := range groups {
 		b.WriteString("|")
 		for _, c := range cols {
-			cell := moduleColumns[c].render(mg, r)
+			cell := moduleColumns[c].render(mg, r, changedMode)
 			if cell == "" {
 				cell = empty
 			}
@@ -121,13 +127,16 @@ func (ModulesTable) Render(ctx *BlockContext, args map[string]any) (string, erro
 
 type moduleColumn struct {
 	heading string
-	render  func(mg core.ModuleGroup, r *core.Report) string
+	// render takes the group, its enclosing report, and the current
+	// changed_attrs display mode (resolved from arg + ctx + default).
+	// Most columns ignore the mode argument.
+	render func(mg core.ModuleGroup, r *core.Report, changedMode string) string
 }
 
 var moduleColumns = map[string]moduleColumn{
 	"module_type": {
 		heading: "Module type",
-		render: func(mg core.ModuleGroup, r *core.Report) string {
+		render: func(mg core.ModuleGroup, r *core.Report, _ string) string {
 			mt := core.ModuleTypeForGroup(mg, r)
 			if mt == "" {
 				return ""
@@ -137,7 +146,7 @@ var moduleColumns = map[string]moduleColumn{
 	},
 	"module": {
 		heading: "Module",
-		render: func(mg core.ModuleGroup, _ *core.Report) string {
+		render: func(mg core.ModuleGroup, _ *core.Report, _ string) string {
 			if mg.Name == "" {
 				return ""
 			}
@@ -146,7 +155,7 @@ var moduleColumns = map[string]moduleColumn{
 	},
 	"module_path": {
 		heading: "Module path",
-		render: func(mg core.ModuleGroup, _ *core.Report) string {
+		render: func(mg core.ModuleGroup, _ *core.Report, _ string) string {
 			if mg.Path == "" {
 				return ""
 			}
@@ -155,25 +164,25 @@ var moduleColumns = map[string]moduleColumn{
 	},
 	"description": {
 		heading: "Description",
-		render: func(mg core.ModuleGroup, _ *core.Report) string {
+		render: func(mg core.ModuleGroup, _ *core.Report, _ string) string {
 			return mg.Description
 		},
 	},
 	"resources": {
 		heading: "Resources",
-		render: func(mg core.ModuleGroup, _ *core.Report) string {
+		render: func(mg core.ModuleGroup, _ *core.Report, _ string) string {
 			return strconv.Itoa(len(mg.Changes))
 		},
 	},
 	"actions": {
 		heading: "Actions",
-		render: func(mg core.ModuleGroup, _ *core.Report) string {
+		render: func(mg core.ModuleGroup, _ *core.Report, _ string) string {
 			return actionSummaryLine(mg.ActionCounts)
 		},
 	},
 	"impact": {
 		heading: "Impact",
-		render: func(mg core.ModuleGroup, _ *core.Report) string {
+		render: func(mg core.ModuleGroup, _ *core.Report, _ string) string {
 			imp := core.MaxImpactForGroup(mg)
 			if imp == "" {
 				return ""
@@ -183,28 +192,98 @@ var moduleColumns = map[string]moduleColumn{
 	},
 	"changed_attrs": {
 		heading: "Changed attributes",
-		render: func(mg core.ModuleGroup, _ *core.Report) string {
-			seen := map[string]struct{}{}
-			for _, rc := range mg.Changes {
-				for _, ca := range rc.ChangedAttributes {
-					seen[ca.Key] = struct{}{}
-				}
-			}
-			if len(seen) == 0 {
-				return ""
-			}
-			keys := make([]string, 0, len(seen))
-			for k := range seen {
-				keys = append(keys, k)
-			}
-			sort.Strings(keys)
-			parts := make([]string, len(keys))
-			for i, k := range keys {
-				parts[i] = "`" + k + "`"
-			}
-			return strings.Join(parts, ", ")
-		},
+		render:  renderModulesTableChangedAttrs,
 	},
+}
+
+// renderModulesTableChangedAttrs builds the per-group cell for the
+// changed_attrs column. Behavior depends on changedMode:
+//
+//   - mode="list" (legacy) → union of every ChangedAttribute key across every
+//     resource in the group, regardless of action.
+//   - mode in {dash, wordy, count} → attrs from create/delete resources are
+//     excluded from the union. If the group has any update/replace resources,
+//     render the filtered union. If the whole group is create/delete/read/no-op,
+//     render the mode-appropriate placeholder (dash / new|removed|new+removed /
+//     count-of-all-attrs).
+//
+// Empty output is returned as "" (the Render loop replaces it with the
+// block's `empty` arg, default "—").
+func renderModulesTableChangedAttrs(mg core.ModuleGroup, _ *core.Report, changedMode string) string {
+	if changedMode == "" {
+		changedMode = ChangedAttrsDash
+	}
+
+	if changedMode == ChangedAttrsList {
+		return unionAttrKeys(mg.Changes)
+	}
+
+	// Partition resources into meaningful (update/replace) vs compact
+	// (create/delete/read/no-op). If any meaningful ones exist, render
+	// their union only.
+	var meaningful []core.ResourceChange
+	var create, del int
+	for _, rc := range mg.Changes {
+		switch rc.Action {
+		case core.ActionUpdate, core.ActionReplace:
+			meaningful = append(meaningful, rc)
+		case core.ActionCreate:
+			create++
+		case core.ActionDelete:
+			del++
+		}
+	}
+	if len(meaningful) > 0 {
+		return unionAttrKeys(meaningful)
+	}
+
+	// Whole group is create/delete/read/no-op. Mode decides the placeholder.
+	switch changedMode {
+	case ChangedAttrsWordy:
+		switch {
+		case create > 0 && del > 0:
+			return "new+removed"
+		case create > 0:
+			return "new"
+		case del > 0:
+			return "removed"
+		default:
+			return "—"
+		}
+	case ChangedAttrsCount:
+		total := 0
+		for _, rc := range mg.Changes {
+			total += len(rc.ChangedAttributes)
+		}
+		return fmt.Sprintf("%d attrs", total)
+	default: // ChangedAttrsDash
+		return "—"
+	}
+}
+
+// unionAttrKeys returns a sorted, backtick-wrapped, comma-joined union of
+// every ChangedAttribute key across the supplied resources. Returns ""
+// when the union is empty (caller decides the placeholder).
+func unionAttrKeys(changes []core.ResourceChange) string {
+	seen := map[string]struct{}{}
+	for _, rc := range changes {
+		for _, ca := range rc.ChangedAttributes {
+			seen[ca.Key] = struct{}{}
+		}
+	}
+	if len(seen) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(seen))
+	for k := range seen {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, len(keys))
+	for i, k := range keys {
+		parts[i] = "`" + k + "`"
+	}
+	return strings.Join(parts, ", ")
 }
 
 func sortedColumnIDs() []string {
@@ -236,6 +315,7 @@ func (ModulesTable) Doc() BlockDoc {
 			{Name: "columns", Type: "csv", Default: "module,changed_attrs", Description: "Comma-separated column IDs to include. See Columns below."},
 			{Name: "max", Type: "int", Default: "0 (no limit)", Description: "Cap the table at this many rows. Extra rows collapse into a single '…' row."},
 			{Name: "empty", Type: "string", Default: "—", Description: "Cell value used for empty/missing data."},
+			{Name: "changed_attrs_display", Type: "string", Default: "(cfg.Output.ChangedAttrsDisplay or `dash`)", Description: "How the `changed_attrs` union column treats create/delete resources. Non-list modes exclude their attrs from the union when update/replace resources are present; when the whole group is create/delete, render a mode-appropriate placeholder (dash / wordy new|removed|new+removed / count of total attrs). `list` preserves the legacy full union."},
 		},
 		Columns: cols,
 		Examples: []ExampleDoc{

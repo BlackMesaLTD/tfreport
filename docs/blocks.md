@@ -77,6 +77,7 @@ Per-resource impact table with pluggable columns and multi-axis filtering.
 | `resource_types` | `csv` | (all) | Filter: keep rows whose ResourceType matches exactly. |
 | `is_import` | `string` | (both) | `true` keeps only imports, `false` only non-imports, empty keeps both. |
 | `max` | `int` | 0 (no limit) | Cap number of rows; truncated rows collapse into `… N more resources`. |
+| `changed_attrs_display` | `string` | (cfg.Output.ChangedAttrsDisplay or `dash`) | Render mode for the `changed` column on create/delete rows: `dash` (—), `wordy` (new/removed), `count` (N attrs), `list` (legacy full keys-list). Update/replace always show backticked keys. |
 
 **Columns** (for the `columns` csv arg):
 
@@ -227,6 +228,7 @@ One section per module group (collapsible <details> on GitHub targets, flat H3 o
 | `actions` | `csv` | (all) | Filter: keep only resources whose action is in the set. |
 | `impact` | `csv` | (all) | Filter: keep only resources whose Impact is in the set. |
 | `max` | `int` | 0 (no limit) | Cap resources per module section; extras collapse into `… N more resources`. |
+| `changed_attrs_display` | `string` | (cfg.Output.ChangedAttrsDisplay or `dash`) | How the `changed` column / `[attrs]` suffix renders for create/delete rows: `dash` (—), `wordy` (new/removed), `count` (N attrs), `list` (legacy full keys-list). Update/replace always show keys-list. |
 
 **Columns** (for the `columns` csv arg):
 
@@ -252,6 +254,7 @@ Flat one-row-per-module-group markdown table with pluggable columns. Pick column
 | `columns` | `csv` | module,changed_attrs | Comma-separated column IDs to include. See Columns below. |
 | `max` | `int` | 0 (no limit) | Cap the table at this many rows. Extra rows collapse into a single '…' row. |
 | `empty` | `string` | — | Cell value used for empty/missing data. |
+| `changed_attrs_display` | `string` | (cfg.Output.ChangedAttrsDisplay or `dash`) | How the `changed_attrs` union column treats create/delete resources. Non-list modes exclude their attrs from the union when update/replace resources are present; when the whole group is create/delete, render a mode-appropriate placeholder (dash / wordy new\|removed\|new+removed / count of total attrs). `list` preserves the legacy full union. |
 
 **Columns** (for the `columns` csv arg):
 

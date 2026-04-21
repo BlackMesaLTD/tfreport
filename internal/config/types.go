@@ -37,6 +37,7 @@ type OutputConfig struct {
 	SubmoduleDepth        int                     `yaml:"submodule_depth"`
 	StepSummaryMaxKB      int                     `yaml:"step_summary_max_kb"`
 	CodeFormat            string                  `yaml:"code_format"`
+	ChangedAttrsDisplay   string                  `yaml:"changed_attrs_display"`
 	Targets               map[string]TargetConfig `yaml:"targets"`
 }
 
@@ -59,6 +60,7 @@ type TargetConfig struct {
 	SubmoduleDepth        *int   `yaml:"submodule_depth,omitempty"`
 	StepSummaryMaxKB      *int   `yaml:"step_summary_max_kb,omitempty"`
 	CodeFormat            string `yaml:"code_format,omitempty"`
+	ChangedAttrsDisplay   string `yaml:"changed_attrs_display,omitempty"`
 }
 
 // SectionsConfig enables the simple "toggle sections on/off" mode against
@@ -78,7 +80,8 @@ func (t TargetConfig) IsZero() bool {
 		t.GroupSubmodules == nil &&
 		t.SubmoduleDepth == nil &&
 		t.StepSummaryMaxKB == nil &&
-		t.CodeFormat == ""
+		t.CodeFormat == "" &&
+		t.ChangedAttrsDisplay == ""
 }
 
 // IsZero reports whether no section filtering was configured.
@@ -126,6 +129,9 @@ func (c Config) EffectiveOutput(target string) OutputConfig {
 	}
 	if tc.CodeFormat != "" {
 		out.CodeFormat = tc.CodeFormat
+	}
+	if tc.ChangedAttrsDisplay != "" {
+		out.ChangedAttrsDisplay = tc.ChangedAttrsDisplay
 	}
 	return out
 }
