@@ -18,7 +18,7 @@
 <details><summary>✅ **privatelink** (1 resources: 1 create)</summary>
 
 | Resource | Action | Changed Attributes |
-|----------|--------|--------------------|
+|---|---|---|
 | `azurerm_private_endpoint.web` | ✅ create | location, name, tags |
 
 </details>
@@ -26,7 +26,7 @@
 <details><summary>❗ **routes** (1 resources: 1 delete)</summary>
 
 | Resource | Action | Changed Attributes |
-|----------|--------|--------------------|
+|---|---|---|
 | `azurerm_route.legacy` | ❗ delete | address_prefix, name, next_hop_type |
 
 </details>
@@ -34,7 +34,7 @@
 <details><summary>⚠️ **virtual_network** (2 resources: 2 update)</summary>
 
 | Resource | Action | Changed Attributes |
-|----------|--------|--------------------|
+|---|---|---|
 | `azurerm_subnet.app` | ⚠️ update | tags |
 | `azurerm_subnet.db` | ⚠️ update | tags |
 

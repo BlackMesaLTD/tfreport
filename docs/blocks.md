@@ -6,21 +6,113 @@ See [docs/output-templates.md](output-templates.md) for composition tiers, raw-d
 
 ## Blocks
 
-### `changed_resources_table`
+### `attribute_diff`
 
-Per-resource impact table (`| Resource | Name | Changed | Impact |`). Used inside github-step-summary instance dropdowns.
+Per-attribute diff rendering (table/list/inline). Fills the gap between verbose text_plan and one-line synthetic diffs.
 
 **Args:**
 
 | Name | Type | Default | Description |
 |------|------|---------|-------------|
+| `format` | `string` | table | One of `table`, `list`, `inline`. |
+| `addresses` | `csv` | (all non-read) | Restrict to these resource addresses. |
+| `actions` | `csv` | update,replace | Filter by action. |
+| `columns` | `csv` | key,old,new | Table-mode columns. |
+| `max` | `int` | 0 (no limit) | Cap rows; truncation marker `… N more attributes`. |
+| `truncate` | `int` | 60 | Max characters per before/after cell (0 disables). |
+
+**Columns** (for the `columns` csv arg):
+
+| ID | Heading | Description |
+|----|---------|-------------|
+| `address` | Address | Full terraform address of the enclosing resource. |
+| `description` | Description | Attribute description (from preset or config); `—` when unset. |
+| `impact` | Impact | Impact of the enclosing resource, with emoji + optional note. |
+| `key` | Attribute | Attribute name, backticked. |
+| `new` | After | After value, same grammar as Before. |
+| `old` | Before | Before value. `(known after apply)` for computed values; `—` for nil. |
+| `resource_type` | Resource Type | Display name for the enclosing resource's type. |
+
+
+### `banner`
+
+Conditional callout line. Returns empty when no trigger matches — safe to include unconditionally. OR semantics across triggers.
+
+**Args:**
+
+| Name | Type | Default | Description |
+|------|------|---------|-------------|
+| `text` | `string` | — | Required. Banner body. |
+| `style` | `string` | alert | One of `alert`, `warn`, `success`, `info`. Picks the default icon. |
+| `icon` | `string` | (style-derived) | Override the leading emoji. |
+| `if_impact` | `csv` | (none) | Fire when any report's MaxImpact is in the set (e.g. `critical,high`). |
+| `if_action_gt` | `csv` | (none) | Flat `action:N,action:N` syntax. Fire when action_count(action) > N. |
+
+**Example:**
+
+```tmpl
+{{ banner "if_action_gt" "delete:0,replace:0" "style" "alert" "text" "Destructive changes detected — review carefully." }}
+```
+
+Renders:
+
+```
+⛔ **Destructive changes detected — review carefully.**
+```
+
+
+### `changed_resources_table`
+
+Per-resource impact table with pluggable columns and multi-axis filtering.
+
+**Args:**
+
+| Name | Type | Default | Description |
+|------|------|---------|-------------|
+| `columns` | `csv` | resource_type,name,changed,impact | Columns to render; see Columns table below. |
 | `actions` | `csv` | update,delete,replace | Filter by action. Use `all` to include create and read. |
-| `max` | `int` | 0 (no limit) | Cap number of rows. Hits emit a `… N more resources` marker. |
+| `impact` | `csv` | (all) | Filter: keep rows whose Impact is in the set (e.g. `critical,high`). |
+| `modules` | `csv` | (all) | Filter: keep rows whose top-level module call name matches (case-insensitive). |
+| `module_types` | `csv` | (all) | Filter: keep rows whose resolved module type matches. |
+| `resource_types` | `csv` | (all) | Filter: keep rows whose ResourceType matches exactly. |
+| `is_import` | `string` | (both) | `true` keeps only imports, `false` only non-imports, empty keeps both. |
+| `max` | `int` | 0 (no limit) | Cap number of rows; truncated rows collapse into `… N more resources`. |
+
+**Columns** (for the `columns` csv arg):
+
+| ID | Heading | Description |
+|----|---------|-------------|
+| `action` | Action | Action emoji + action name. |
+| `address` | Address | Full terraform address in backticks (e.g. `module.vnet.azurerm_subnet.app`). |
+| `changed` | Changed | Changed attribute keys (backticked, comma-joined). |
+| `force_new` | Force-new | `✓` when any changed attribute is preset-marked force_new; `—` otherwise. Requires ctx.ForceNewResolver. |
+| `impact` | Impact | Impact emoji + level + optional note. |
+| `is_import` | Import | `♻️ yes` for `rc.IsImport=true`; `—` otherwise. |
+| `module` | Module | Module call name (backticked). |
+| `module_type` | Module Type | Resolved module type from source URL. |
+| `name` | Name | Resource display label (pre-computed from Before/After `name` attr). |
+| `notes` | Notes | Config-provided attribute notes for any changed attribute; `—` if none. |
+| `resource_type` | Resource | Display name for the resource type (e.g. `subnet`). |
 
 
 ### `deploy_checklist`
 
 GitHub task-list checkboxes, one per report. Degenerates to a single item in single-report mode.
+
+**Args:**
+
+| Name | Type | Default | Description |
+|------|------|---------|-------------|
+| `columns` | `csv` | subscription,impact,actions | Columns rendered per checklist line. Order is preserved; separators adapt to column identity. |
+
+**Columns** (for the `columns` csv arg):
+
+| ID | Heading | Description |
+|----|---------|-------------|
+| `actions` | Actions | Action-summary line (e.g. `1 create, 2 update, 1 delete`). |
+| `impact` | Impact | `(r.MaxImpact)` in parentheses. |
+| `key_changes_count` | Key Changes | `N key changes` where N = len(r.KeyChanges). |
+| `subscription` | Subscription | Report label (or `default`) in bold. |
 
 
 ### `diff_groups`
@@ -31,8 +123,17 @@ Collapses resources with identical change fingerprints into grouped rows. Single
 
 | Name | Type | Default | Description |
 |------|------|---------|-------------|
+| `columns` | `csv` | pattern,count,sample | Column subset for the collapsed-changes table. |
 | `threshold` | `int` | 2 | Only collapse when group size ≥ threshold. |
 | `actions` | `csv` | update,delete,replace | Which actions participate in fingerprint grouping. |
+
+**Columns** (for the `columns` csv arg):
+
+| ID | Heading | Description |
+|----|---------|-------------|
+| `count` | Count | Number of resources sharing this fingerprint. |
+| `pattern` | Pattern | Action emoji + action + bracketed attribute-key list. |
+| `sample` | Sample | One representative address, backticked. |
 
 
 ### `fleet_homogeneity`
@@ -64,6 +165,29 @@ Opt-in blockquote defining tfreport's action + impact vocabulary. Never in defau
 | `level` | `string` | beginner | `beginner` (verbose explanations) or `intermediate` (compact). |
 
 
+### `imports_list`
+
+Enumerates resources with `IsImport=true` across all module groups. Bulleted list by default; table with pluggable columns when `format=table`.
+
+**Args:**
+
+| Name | Type | Default | Description |
+|------|------|---------|-------------|
+| `format` | `string` | list | One of `list` (bullet points) or `table` (markdown table). |
+| `columns` | `csv` | address,resource_type,module | Table-mode columns. |
+| `max` | `int` | 0 (no limit) | Cap rows; truncated rows collapse into `… N more imports`. |
+
+**Columns** (for the `columns` csv arg):
+
+| ID | Heading | Description |
+|----|---------|-------------|
+| `address` | Address | Full terraform address, backticked. |
+| `module` | Module | Enclosing module call name. |
+| `module_path` | Module Path | Enclosing module's full dotted path. |
+| `resource_name` | Name | Pre-computed resource display label. |
+| `resource_type` | Resource Type | Display name for the resource type. |
+
+
 ### `instance_detail`
 
 Per-module-instance detail sections used by github-step-summary: collapsible headers wrapping impact tables plus text-plan or synthetic diffs.
@@ -91,13 +215,29 @@ Plain-English summary bullets, impact-tagged, with optional filter and truncatio
 
 ### `module_details`
 
-Per-module section: collapsible <details> (GitHub targets) or flat H3 (markdown) wrapping a resource table or per-resource diff block.
+One section per module group (collapsible <details> on GitHub targets, flat H3 on markdown) wrapping a configurable body: resource table (default), diff block, or bullet list.
 
 **Args:**
 
 | Name | Type | Default | Description |
 |------|------|---------|-------------|
-| `per_resource` | `bool` | true for github-pr-comment, else false | When true, emits a ```diff code block with one line per resource instead of a resource table. |
+| `format` | `string` | (diff for pr-comment, else table) | One of `table`, `diff`, `list`. |
+| `per_resource` | `bool` | (legacy) | Deprecated alias: `true` maps to `format=diff`. Remove once callers migrate. |
+| `columns` | `csv` | resource,action,changed | Table-mode columns. Ignored for format=diff/list. |
+| `actions` | `csv` | (all) | Filter: keep only resources whose action is in the set. |
+| `impact` | `csv` | (all) | Filter: keep only resources whose Impact is in the set. |
+| `max` | `int` | 0 (no limit) | Cap resources per module section; extras collapse into `… N more resources`. |
+
+**Columns** (for the `columns` csv arg):
+
+| ID | Heading | Description |
+|----|---------|-------------|
+| `action` | Action | Action emoji + action name. |
+| `address` | Address | Full terraform address, backticked. |
+| `changed` | Changed Attributes | Changed attribute keys + optional descriptions, comma-joined. |
+| `force_new` | Force-new | `✓` when any changed attribute is preset-marked force_new; `—` otherwise. |
+| `impact` | Impact | Impact emoji + level + optional note. |
+| `resource` | Resource | Address relative to the module (module-prefix stripped), backticked. |
 
 
 ### `modules_table`
@@ -161,15 +301,37 @@ Terraform-style verb summary (`Plan: 1 to add, 2 to change, 1 to destroy.`). Tar
 
 ### `risk_histogram`
 
-Impact-level distribution across all resources in scope. Three visual styles (bar table, inline one-liner).
+Impact-level distribution across all resources in scope. Three visual styles (bar/table/inline one-liner).
 
 **Args:**
 
 | Name | Type | Default | Description |
 |------|------|---------|-------------|
-| `style` | `string` | bar | One of `bar` (table with unicode bars), `table` (no bar column), `inline` (single line). |
+| `style` | `string` | bar | One of `bar` (table with unicode bars), `table` (no bar column by default), `inline` (single line). |
+| `columns` | `csv` | (bar: impact,count,bar; table: impact,count) | Subset of columns for table/bar styles. Ignored for inline. |
 | `include_none` | `bool` | false | Include `impact=none` (no-op) in output. |
 | `max_bar` | `int` | 40 | Cap bar length; counts above this truncate with a `+` marker. |
+
+**Columns** (for the `columns` csv arg):
+
+| ID | Heading | Description |
+|----|---------|-------------|
+| `bar` | Bar | Unicode block bar; width == count (capped at max_bar). |
+| `count` | Count | Resource count at this impact level. |
+| `impact` | Impact | Impact label (emoji + name). |
+
+
+### `submodule_group`
+
+Nested <details> collapsibles per sub-module of a given top-level module instance. Extracted from instance_detail's internal grouping.
+
+**Args:**
+
+| Name | Type | Default | Description |
+|------|------|---------|-------------|
+| `instance` | `string` | — | Required. Top-level module name (e.g. `vnet`). |
+| `depth` | `int` | (ctx.Output.SubmoduleDepth, else 1) | Sub-module path segments to keep; joined with ` > ` for depth>1. |
+| `format` | `string` | diff | Inner rendering for each sub-module group: `diff` (fenced code block) or `list` (bullets). |
 
 
 ### `summary_table`

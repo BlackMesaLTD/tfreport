@@ -553,6 +553,843 @@ func TestSummaryTable_maxUnlimited(t *testing.T) {
 	}
 }
 
+// ----- submodule_group (Phase 5a) -----
+
+func sgReport() *core.Report {
+	return syntheticReport("a",
+		core.ModuleGroup{
+			Name: "app", Path: "module.vnet.module.app",
+			Changes: []core.ResourceChange{
+				{Address: "module.vnet.module.app.azurerm_subnet.a", ResourceType: "azurerm_subnet", ResourceName: "a", Action: core.ActionUpdate, ChangedAttributes: []core.ChangedAttribute{{Key: "tags"}}},
+			},
+			ActionCounts: map[core.Action]int{core.ActionUpdate: 1},
+		},
+		core.ModuleGroup{
+			Name: "db", Path: "module.vnet.module.db",
+			Changes: []core.ResourceChange{
+				{Address: "module.vnet.module.db.azurerm_subnet.b", ResourceType: "azurerm_subnet", ResourceName: "b", Action: core.ActionDelete},
+			},
+			ActionCounts: map[core.Action]int{core.ActionDelete: 1},
+		},
+		core.ModuleGroup{
+			Name: "other", Path: "module.nsg",
+			Changes: []core.ResourceChange{
+				{Address: "module.nsg.azurerm_nsg.x", ResourceType: "azurerm_nsg", ResourceName: "x", Action: core.ActionCreate},
+			},
+			ActionCounts: map[core.Action]int{core.ActionCreate: 1},
+		},
+	)
+}
+
+func TestSubmoduleGroup_requiresInstance(t *testing.T) {
+	r := sgReport()
+	_, err := SubmoduleGroup{}.Render(&BlockContext{Target: "github-step-summary", Report: r}, nil)
+	if err == nil {
+		t.Fatal("expected error when instance missing")
+	}
+}
+
+func TestSubmoduleGroup_rendersNestedDetails(t *testing.T) {
+	r := sgReport()
+	out, err := SubmoduleGroup{}.Render(&BlockContext{Target: "github-step-summary", Report: r},
+		map[string]any{"instance": "vnet"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "<details><summary>app (1 update)</summary>") {
+		t.Errorf("want app sub-group header, got:\n%s", out)
+	}
+	if !strings.Contains(out, "<details><summary>db (1 delete)</summary>") {
+		t.Errorf("want db sub-group header, got:\n%s", out)
+	}
+	if strings.Contains(out, "nsg") {
+		t.Errorf("other instance shouldn't appear, got:\n%s", out)
+	}
+}
+
+func TestSubmoduleGroup_formatList(t *testing.T) {
+	r := sgReport()
+	out, err := SubmoduleGroup{}.Render(&BlockContext{Target: "github-step-summary", Report: r},
+		map[string]any{"instance": "vnet", "format": "list"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "- ⚠️ `module.vnet.module.app.azurerm_subnet.a`") {
+		t.Errorf("want list format with address bullets, got:\n%s", out)
+	}
+	if strings.Contains(out, "```diff") {
+		t.Errorf("format=list should not emit diff fence, got:\n%s", out)
+	}
+}
+
+func TestSubmoduleGroup_unknownFormat(t *testing.T) {
+	r := sgReport()
+	_, err := SubmoduleGroup{}.Render(&BlockContext{Target: "github-step-summary", Report: r},
+		map[string]any{"instance": "vnet", "format": "bogus"})
+	if err == nil {
+		t.Fatal("expected error for unknown format")
+	}
+}
+
+func TestSubmoduleGroup_unknownInstanceReturnsEmpty(t *testing.T) {
+	r := sgReport()
+	out, err := SubmoduleGroup{}.Render(&BlockContext{Target: "github-step-summary", Report: r},
+		map[string]any{"instance": "does-not-exist"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "" {
+		t.Errorf("expected empty for unknown instance, got:\n%s", out)
+	}
+}
+
+// ----- attribute_diff (Phase 4c) -----
+
+func adReport() *core.Report {
+	return syntheticReport("a",
+		syntheticGroup("m",
+			core.ResourceChange{
+				Address: "module.m.azurerm_subnet.app", ResourceType: "azurerm_subnet",
+				ResourceName: "app", Action: core.ActionUpdate, Impact: core.ImpactMedium,
+				ChangedAttributes: []core.ChangedAttribute{
+					{Key: "tags", OldValue: map[string]string{"env": "dev"}, NewValue: map[string]string{"env": "prod"}, Description: "Resource tags"},
+					{Key: "name", OldValue: "old", NewValue: "new"},
+				},
+			},
+			core.ResourceChange{
+				Address: "module.m.azurerm_vm.web", ResourceType: "azurerm_virtual_machine",
+				ResourceName: "web", Action: core.ActionReplace,
+				ChangedAttributes: []core.ChangedAttribute{
+					{Key: "size", OldValue: "Small", NewValue: "Large"},
+					{Key: "ip_address", Computed: true},
+				},
+			},
+		),
+	)
+}
+
+func TestAttributeDiff_tableDefault(t *testing.T) {
+	r := adReport()
+	out, err := AttributeDiff{}.Render(&BlockContext{Target: "markdown", Report: r}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "| Attribute | Before | After |") {
+		t.Errorf("want default table header, got:\n%s", out)
+	}
+	if !strings.Contains(out, "`tags`") || !strings.Contains(out, "`size`") {
+		t.Errorf("want rows for each attribute, got:\n%s", out)
+	}
+}
+
+func TestAttributeDiff_computedValue(t *testing.T) {
+	r := adReport()
+	out, err := AttributeDiff{}.Render(&BlockContext{Target: "markdown", Report: r}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "(known after apply)") {
+		t.Errorf("computed attribute should render `(known after apply)`, got:\n%s", out)
+	}
+}
+
+func TestAttributeDiff_listFormat(t *testing.T) {
+	r := adReport()
+	out, err := AttributeDiff{}.Render(&BlockContext{Target: "markdown", Report: r},
+		map[string]any{"format": "list"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "- **tags**:") {
+		t.Errorf("list format should use `- **key**:` style, got:\n%s", out)
+	}
+	if !strings.Contains(out, "→") {
+		t.Errorf("list format should use → arrow, got:\n%s", out)
+	}
+}
+
+func TestAttributeDiff_inlineFormat(t *testing.T) {
+	r := adReport()
+	out, err := AttributeDiff{}.Render(&BlockContext{Target: "markdown", Report: r},
+		map[string]any{"format": "inline"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "tags(") || !strings.Contains(out, "→") {
+		t.Errorf("inline format should be compact key(old→new), got:\n%s", out)
+	}
+	if strings.Contains(out, "\n") {
+		t.Errorf("inline format should be one line, got:\n%s", out)
+	}
+}
+
+func TestAttributeDiff_addressFilter(t *testing.T) {
+	r := adReport()
+	out, err := AttributeDiff{}.Render(&BlockContext{Target: "markdown", Report: r},
+		map[string]any{"addresses": "module.m.azurerm_subnet.app"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "tags") || !strings.Contains(out, "name") {
+		t.Errorf("want subnet's attrs, got:\n%s", out)
+	}
+	if strings.Contains(out, "size") || strings.Contains(out, "ip_address") {
+		t.Errorf("vm's attrs should be filtered out, got:\n%s", out)
+	}
+}
+
+func TestAttributeDiff_unknownFormat(t *testing.T) {
+	r := adReport()
+	_, err := AttributeDiff{}.Render(&BlockContext{Target: "markdown", Report: r},
+		map[string]any{"format": "bogus"})
+	if err == nil {
+		t.Fatal("expected error for unknown format")
+	}
+}
+
+func TestAttributeDiff_columnsSubset(t *testing.T) {
+	r := adReport()
+	out, err := AttributeDiff{}.Render(&BlockContext{Target: "markdown", Report: r},
+		map[string]any{"columns": "key,address"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "| Attribute | Address |") {
+		t.Errorf("want Attribute+Address only, got:\n%s", out)
+	}
+	if strings.Contains(out, "Before") || strings.Contains(out, "After") {
+		t.Errorf("Before/After should be dropped, got:\n%s", out)
+	}
+}
+
+func TestAttributeDiff_truncateLongValue(t *testing.T) {
+	long := strings.Repeat("x", 200)
+	r := syntheticReport("a", syntheticGroup("m",
+		core.ResourceChange{
+			Address: "a", Action: core.ActionUpdate,
+			ChangedAttributes: []core.ChangedAttribute{{Key: "k", OldValue: long, NewValue: "ok"}},
+		},
+	))
+	out, err := AttributeDiff{}.Render(&BlockContext{Target: "markdown", Report: r},
+		map[string]any{"truncate": 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "…") {
+		t.Errorf("long value should truncate with …, got:\n%s", out)
+	}
+}
+
+// ----- banner (Phase 4b) -----
+
+func TestBanner_requiredText(t *testing.T) {
+	_, err := Banner{}.Render(&BlockContext{Target: "markdown", Report: &core.Report{}}, nil)
+	if err == nil {
+		t.Fatal("expected error when text missing")
+	}
+}
+
+func TestBanner_unknownStyle(t *testing.T) {
+	_, err := Banner{}.Render(&BlockContext{Target: "markdown", Report: &core.Report{}},
+		map[string]any{"text": "hi", "style": "bogus"})
+	if err == nil {
+		t.Fatal("expected error for unknown style")
+	}
+}
+
+func TestBanner_noTriggersAlwaysFires(t *testing.T) {
+	out, err := Banner{}.Render(&BlockContext{Target: "markdown", Report: &core.Report{}},
+		map[string]any{"text": "always"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "always") {
+		t.Errorf("no-triggers should always fire, got:\n%s", out)
+	}
+	if !strings.HasPrefix(out, "⛔ ") {
+		t.Errorf("default style=alert uses ⛔, got:\n%s", out)
+	}
+}
+
+func TestBanner_ifImpactMatch(t *testing.T) {
+	r := &core.Report{MaxImpact: core.ImpactHigh}
+	out, err := Banner{}.Render(&BlockContext{Target: "markdown", Report: r},
+		map[string]any{"text": "risky", "if_impact": "critical,high"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "risky") {
+		t.Errorf("if_impact should match high and fire, got:\n%s", out)
+	}
+}
+
+func TestBanner_ifImpactNoMatch(t *testing.T) {
+	r := &core.Report{MaxImpact: core.ImpactLow}
+	out, err := Banner{}.Render(&BlockContext{Target: "markdown", Report: r},
+		map[string]any{"text": "risky", "if_impact": "critical,high"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "" {
+		t.Errorf("if_impact should not fire for low, got:\n%s", out)
+	}
+}
+
+func TestBanner_ifActionGtFires(t *testing.T) {
+	r := &core.Report{ActionCounts: map[core.Action]int{core.ActionDelete: 2}}
+	out, err := Banner{}.Render(&BlockContext{Target: "markdown", Report: r},
+		map[string]any{"text": "deletes", "if_action_gt": "delete:0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "deletes") {
+		t.Errorf("delete:0 should fire when delete=2, got:\n%s", out)
+	}
+}
+
+func TestBanner_ifActionGtBelowThreshold(t *testing.T) {
+	r := &core.Report{ActionCounts: map[core.Action]int{core.ActionDelete: 1}}
+	out, err := Banner{}.Render(&BlockContext{Target: "markdown", Report: r},
+		map[string]any{"text": "x", "if_action_gt": "delete:5"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "" {
+		t.Errorf("delete:5 shouldn't fire for delete=1, got:\n%s", out)
+	}
+}
+
+func TestBanner_ifActionGtMalformed(t *testing.T) {
+	_, err := Banner{}.Render(&BlockContext{Target: "markdown", Report: &core.Report{}},
+		map[string]any{"text": "x", "if_action_gt": "delete"})
+	if err == nil {
+		t.Fatal("expected error for malformed if_action_gt")
+	}
+}
+
+func TestBanner_iconOverride(t *testing.T) {
+	out, err := Banner{}.Render(&BlockContext{Target: "markdown", Report: &core.Report{}},
+		map[string]any{"text": "hi", "icon": "🚨"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(out, "🚨 ") {
+		t.Errorf("icon override should replace default, got:\n%s", out)
+	}
+}
+
+func TestBanner_successStyle(t *testing.T) {
+	// no triggers → always fires; confirm ✅ is the default icon for success.
+	out, err := Banner{}.Render(&BlockContext{Target: "markdown", Report: &core.Report{}},
+		map[string]any{"text": "clean", "style": "success"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(out, "✅ ") {
+		t.Errorf("success style should use ✅, got:\n%s", out)
+	}
+}
+
+// ----- imports_list (Phase 4a) -----
+
+func importsReport() *core.Report {
+	return syntheticReport("a",
+		core.ModuleGroup{
+			Name: "vnet", Path: "module.vnet",
+			Changes: []core.ResourceChange{
+				{Address: "module.vnet.azurerm_subnet.app", ResourceType: "azurerm_subnet", ResourceName: "app", Action: core.ActionNoOp, IsImport: true},
+				{Address: "module.vnet.azurerm_subnet.db", ResourceType: "azurerm_subnet", ResourceName: "db", Action: core.ActionNoOp, IsImport: true},
+				{Address: "module.vnet.azurerm_route.x", ResourceType: "azurerm_route", ResourceName: "x", Action: core.ActionCreate}, // not an import
+			},
+			ActionCounts: map[core.Action]int{core.ActionNoOp: 2, core.ActionCreate: 1},
+		},
+	)
+}
+
+func TestImportsList_listDefault(t *testing.T) {
+	r := importsReport()
+	out, err := ImportsList{}.Render(&BlockContext{Target: "markdown", Report: r}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "- `module.vnet.azurerm_subnet.app`") {
+		t.Errorf("want bullet for import, got:\n%s", out)
+	}
+	if strings.Contains(out, "azurerm_route.x") {
+		t.Errorf("non-import should be filtered out, got:\n%s", out)
+	}
+	if strings.Contains(out, "| Address |") {
+		t.Errorf("default format=list should not emit a table, got:\n%s", out)
+	}
+}
+
+func TestImportsList_tableFormat(t *testing.T) {
+	r := importsReport()
+	out, err := ImportsList{}.Render(&BlockContext{Target: "markdown", Report: r},
+		map[string]any{"format": "table"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "| Address | Resource Type | Module |") {
+		t.Errorf("want default table header, got:\n%s", out)
+	}
+	if !strings.Contains(out, "azurerm_subnet.app") {
+		t.Errorf("want subnet row, got:\n%s", out)
+	}
+}
+
+func TestImportsList_tableColumnsSubset(t *testing.T) {
+	r := importsReport()
+	out, err := ImportsList{}.Render(&BlockContext{Target: "markdown", Report: r},
+		map[string]any{"format": "table", "columns": "address,module_path"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "| Address | Module Path |") {
+		t.Errorf("want Address+Module Path only, got:\n%s", out)
+	}
+	if strings.Contains(out, "Resource Type") {
+		t.Errorf("Resource Type should be dropped, got:\n%s", out)
+	}
+}
+
+func TestImportsList_unknownFormat(t *testing.T) {
+	r := importsReport()
+	_, err := ImportsList{}.Render(&BlockContext{Target: "markdown", Report: r},
+		map[string]any{"format": "bogus"})
+	if err == nil {
+		t.Fatal("expected error for unknown format")
+	}
+}
+
+func TestImportsList_unknownColumn(t *testing.T) {
+	r := importsReport()
+	_, err := ImportsList{}.Render(&BlockContext{Target: "markdown", Report: r},
+		map[string]any{"format": "table", "columns": "bogus"})
+	if err == nil {
+		t.Fatal("expected error for unknown column")
+	}
+}
+
+func TestImportsList_noImports(t *testing.T) {
+	r := syntheticReport("a", syntheticGroup("m",
+		core.ResourceChange{Address: "a", Action: core.ActionCreate},
+	))
+	out, err := ImportsList{}.Render(&BlockContext{Target: "markdown", Report: r}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "" {
+		t.Errorf("want empty when no imports, got:\n%s", out)
+	}
+}
+
+func TestImportsList_maxTruncates(t *testing.T) {
+	r := importsReport()
+	out, err := ImportsList{}.Render(&BlockContext{Target: "markdown", Report: r},
+		map[string]any{"max": 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "1 more imports") {
+		t.Errorf("want truncation marker, got:\n%s", out)
+	}
+}
+
+// ----- diff_groups / deploy_checklist / risk_histogram columns (Phase 3c) -----
+
+func TestDiffGroups_columnsSubset(t *testing.T) {
+	changes := []core.ResourceChange{
+		{Address: "a", ResourceType: "t", Action: core.ActionUpdate, ChangedAttributes: []core.ChangedAttribute{{Key: "tags"}}},
+		{Address: "b", ResourceType: "t", Action: core.ActionUpdate, ChangedAttributes: []core.ChangedAttribute{{Key: "tags"}}},
+	}
+	r := syntheticReport("a", syntheticGroup("m", changes...))
+	out, err := DiffGroups{}.Render(&BlockContext{Target: "markdown", Report: r},
+		map[string]any{"columns": "pattern,count"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "| Pattern | Count |") {
+		t.Errorf("want Pattern+Count only, got:\n%s", out)
+	}
+	if strings.Contains(out, "Sample") {
+		t.Errorf("Sample column should be dropped, got:\n%s", out)
+	}
+}
+
+func TestDiffGroups_unknownColumn(t *testing.T) {
+	r := syntheticReport("a", syntheticGroup("m",
+		core.ResourceChange{Address: "a", Action: core.ActionUpdate, ChangedAttributes: []core.ChangedAttribute{{Key: "k"}}},
+		core.ResourceChange{Address: "b", Action: core.ActionUpdate, ChangedAttributes: []core.ChangedAttribute{{Key: "k"}}},
+	))
+	_, err := DiffGroups{}.Render(&BlockContext{Target: "markdown", Report: r},
+		map[string]any{"columns": "bogus"})
+	if err == nil {
+		t.Fatal("expected error for unknown column")
+	}
+}
+
+func TestDeployChecklist_defaults(t *testing.T) {
+	out, err := DeployChecklist{}.Render(&BlockContext{
+		Target: "github-pr-body",
+		Reports: []*core.Report{
+			{Label: "sub-a", MaxImpact: core.ImpactHigh, ActionCounts: map[core.Action]int{core.ActionCreate: 1}},
+			{Label: "sub-b", MaxImpact: core.ImpactMedium, ActionCounts: map[core.Action]int{core.ActionUpdate: 2}},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "- [ ] **sub-a** (high) — 1 create") {
+		t.Errorf("want default format, got:\n%s", out)
+	}
+	if !strings.Contains(out, "- [ ] **sub-b** (medium) — 2 update") {
+		t.Errorf("want second row, got:\n%s", out)
+	}
+}
+
+func TestDeployChecklist_columnsSubset(t *testing.T) {
+	out, err := DeployChecklist{}.Render(&BlockContext{
+		Target: "github-pr-body",
+		Reports: []*core.Report{
+			{Label: "sub-a", MaxImpact: core.ImpactHigh, ActionCounts: map[core.Action]int{core.ActionCreate: 1}, KeyChanges: []core.KeyChange{{Text: "x"}}},
+		},
+	}, map[string]any{"columns": "subscription,key_changes_count"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "**sub-a**") {
+		t.Errorf("want subscription, got:\n%s", out)
+	}
+	if !strings.Contains(out, "1 key changes") {
+		t.Errorf("want key_changes_count, got:\n%s", out)
+	}
+	if strings.Contains(out, "(high)") {
+		t.Errorf("impact column should be dropped, got:\n%s", out)
+	}
+}
+
+func TestDeployChecklist_unknownColumn(t *testing.T) {
+	_, err := DeployChecklist{}.Render(&BlockContext{
+		Target:  "github-pr-body",
+		Reports: []*core.Report{{Label: "a"}},
+	}, map[string]any{"columns": "bogus"})
+	if err == nil {
+		t.Fatal("expected error for unknown column")
+	}
+}
+
+func TestRiskHistogram_columnsSubset(t *testing.T) {
+	r := syntheticReport("a", syntheticGroup("m",
+		core.ResourceChange{Address: "a", Action: core.ActionDelete, Impact: core.ImpactHigh},
+	))
+	out, err := RiskHistogram{}.Render(&BlockContext{Target: "markdown", Report: r},
+		map[string]any{"style": "bar", "columns": "impact,count"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "| Impact | Count |") {
+		t.Errorf("want Impact+Count only, got:\n%s", out)
+	}
+	if strings.Contains(out, "Bar") {
+		t.Errorf("Bar column should be dropped, got:\n%s", out)
+	}
+}
+
+func TestRiskHistogram_unknownColumn(t *testing.T) {
+	r := syntheticReport("a", syntheticGroup("m",
+		core.ResourceChange{Address: "a", Action: core.ActionDelete, Impact: core.ImpactHigh},
+	))
+	_, err := RiskHistogram{}.Render(&BlockContext{Target: "markdown", Report: r},
+		map[string]any{"style": "bar", "columns": "bogus"})
+	if err == nil {
+		t.Fatal("expected error for unknown column")
+	}
+}
+
+// ----- module_details: format + columns + filters (Phase 3b) -----
+
+func mdReport() *core.Report {
+	return syntheticReport("a",
+		core.ModuleGroup{
+			Name: "vnet", Path: "module.vnet",
+			Changes: []core.ResourceChange{
+				{Address: "module.vnet.azurerm_subnet.app", ResourceType: "azurerm_subnet", ResourceName: "app", Action: core.ActionUpdate, Impact: core.ImpactMedium, ChangedAttributes: []core.ChangedAttribute{{Key: "tags"}}},
+				{Address: "module.vnet.azurerm_subnet.db", ResourceType: "azurerm_subnet", ResourceName: "db", Action: core.ActionDelete, Impact: core.ImpactHigh, ChangedAttributes: []core.ChangedAttribute{{Key: "name"}}},
+				{Address: "module.vnet.azurerm_route.x", ResourceType: "azurerm_route", ResourceName: "x", Action: core.ActionCreate, Impact: core.ImpactLow},
+			},
+			ActionCounts: map[core.Action]int{core.ActionUpdate: 1, core.ActionDelete: 1, core.ActionCreate: 1},
+		},
+	)
+}
+
+func TestModuleDetails_formatTableDefault(t *testing.T) {
+	r := mdReport()
+	out, err := ModuleDetails{}.Render(&BlockContext{Target: "markdown", Report: r}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "| Resource | Action | Changed Attributes |") {
+		t.Errorf("default table header missing, got:\n%s", out)
+	}
+}
+
+func TestModuleDetails_formatDiff(t *testing.T) {
+	r := mdReport()
+	out, err := ModuleDetails{}.Render(&BlockContext{Target: "markdown", Report: r},
+		map[string]any{"format": "diff"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "```diff") {
+		t.Errorf("format=diff missing code fence, got:\n%s", out)
+	}
+	if strings.Contains(out, "| Resource |") {
+		t.Errorf("format=diff should not render a table, got:\n%s", out)
+	}
+}
+
+func TestModuleDetails_formatList(t *testing.T) {
+	r := mdReport()
+	out, err := ModuleDetails{}.Render(&BlockContext{Target: "markdown", Report: r},
+		map[string]any{"format": "list"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "- ") {
+		t.Errorf("format=list should emit bullets, got:\n%s", out)
+	}
+	if strings.Contains(out, "```diff") {
+		t.Errorf("format=list should not emit code fence, got:\n%s", out)
+	}
+}
+
+func TestModuleDetails_perResourceAlias(t *testing.T) {
+	r := mdReport()
+	// Old-style `per_resource=true` must still produce a diff block.
+	out, err := ModuleDetails{}.Render(&BlockContext{Target: "markdown", Report: r},
+		map[string]any{"per_resource": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "```diff") {
+		t.Errorf("per_resource=true alias should render diff, got:\n%s", out)
+	}
+}
+
+func TestModuleDetails_unknownFormat(t *testing.T) {
+	r := mdReport()
+	_, err := ModuleDetails{}.Render(&BlockContext{Target: "markdown", Report: r},
+		map[string]any{"format": "bogus"})
+	if err == nil {
+		t.Fatal("expected error for unknown format")
+	}
+}
+
+func TestModuleDetails_columnsSubset(t *testing.T) {
+	r := mdReport()
+	out, err := ModuleDetails{}.Render(&BlockContext{Target: "markdown", Report: r},
+		map[string]any{"columns": "address,action"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "| Address | Action |") {
+		t.Errorf("want Address+Action header, got:\n%s", out)
+	}
+	if strings.Contains(out, "Changed Attributes") {
+		t.Errorf("Changed Attributes column should be dropped, got:\n%s", out)
+	}
+}
+
+func TestModuleDetails_unknownColumn(t *testing.T) {
+	r := mdReport()
+	_, err := ModuleDetails{}.Render(&BlockContext{Target: "markdown", Report: r},
+		map[string]any{"columns": "bogus"})
+	if err == nil {
+		t.Fatal("expected error for unknown column")
+	}
+}
+
+func TestModuleDetails_filterActions(t *testing.T) {
+	r := mdReport()
+	out, err := ModuleDetails{}.Render(&BlockContext{Target: "markdown", Report: r},
+		map[string]any{"actions": "delete"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "db") {
+		t.Errorf("delete filter should keep db resource, got:\n%s", out)
+	}
+	if strings.Contains(out, "azurerm_route.x") {
+		t.Errorf("delete filter should drop create, got:\n%s", out)
+	}
+}
+
+func TestModuleDetails_filterImpact(t *testing.T) {
+	r := mdReport()
+	out, err := ModuleDetails{}.Render(&BlockContext{Target: "markdown", Report: r},
+		map[string]any{"impact": "high"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "db") {
+		t.Errorf("impact=high should keep db, got:\n%s", out)
+	}
+	if strings.Contains(out, "azurerm_subnet.app") {
+		t.Errorf("impact=high should drop medium, got:\n%s", out)
+	}
+}
+
+func TestModuleDetails_maxTruncates(t *testing.T) {
+	r := mdReport()
+	out, err := ModuleDetails{}.Render(&BlockContext{Target: "markdown", Report: r},
+		map[string]any{"max": 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "_... 2 more resources_") {
+		t.Errorf("expected truncation marker, got:\n%s", out)
+	}
+}
+
+// ----- changed_resources_table: columns + filters (Phase 3a) -----
+
+func crtReport() *core.Report {
+	// Two modules, six resources with varied action/impact/type/is_import.
+	return syntheticReport("prod",
+		core.ModuleGroup{
+			Name: "vnet", Path: "module.vnet",
+			Changes: []core.ResourceChange{
+				{Address: "module.vnet.azurerm_subnet.app", ResourceType: "azurerm_subnet", ResourceName: "app", Action: core.ActionUpdate, Impact: core.ImpactMedium, ChangedAttributes: []core.ChangedAttribute{{Key: "tags"}}},
+				{Address: "module.vnet.azurerm_subnet.db", ResourceType: "azurerm_subnet", ResourceName: "db", Action: core.ActionDelete, Impact: core.ImpactHigh, ChangedAttributes: []core.ChangedAttribute{{Key: "name"}}},
+				{Address: "module.vnet.azurerm_vnet.main", ResourceType: "azurerm_virtual_network", ResourceName: "main", Action: core.ActionUpdate, Impact: core.ImpactLow, IsImport: true, ChangedAttributes: []core.ChangedAttribute{{Key: "tags"}}},
+			},
+			ActionCounts: map[core.Action]int{core.ActionUpdate: 2, core.ActionDelete: 1},
+		},
+		core.ModuleGroup{
+			Name: "nsg", Path: "module.nsg",
+			Changes: []core.ResourceChange{
+				{Address: "module.nsg.azurerm_nsg.web", ResourceType: "azurerm_network_security_group", ResourceName: "web", Action: core.ActionReplace, Impact: core.ImpactCritical, ChangedAttributes: []core.ChangedAttribute{{Key: "rules"}}},
+				{Address: "module.nsg.azurerm_route.old", ResourceType: "azurerm_route", ResourceName: "old", Action: core.ActionDelete, Impact: core.ImpactHigh, ChangedAttributes: []core.ChangedAttribute{{Key: "next_hop"}}},
+			},
+			ActionCounts: map[core.Action]int{core.ActionReplace: 1, core.ActionDelete: 1},
+		},
+	)
+}
+
+func TestChangedResourcesTable_columnsSubset(t *testing.T) {
+	r := crtReport()
+	out, err := ChangedResourcesTable{}.Render(&BlockContext{Target: "markdown", Report: r},
+		map[string]any{"columns": "address,action", "actions": "all"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "| Address | Action |") {
+		t.Errorf("want only Address+Action header, got:\n%s", out)
+	}
+	if strings.Contains(out, "Resource |") || strings.Contains(out, "Impact |") {
+		t.Errorf("other default columns should be excluded, got:\n%s", out)
+	}
+}
+
+func TestChangedResourcesTable_unknownColumn(t *testing.T) {
+	r := crtReport()
+	_, err := ChangedResourcesTable{}.Render(&BlockContext{Target: "markdown", Report: r},
+		map[string]any{"columns": "bogus"})
+	if err == nil {
+		t.Fatal("expected error for unknown column")
+	}
+	if !strings.Contains(err.Error(), "bogus") {
+		t.Errorf("error should name the offending column: %v", err)
+	}
+}
+
+func TestChangedResourcesTable_filterImpact(t *testing.T) {
+	r := crtReport()
+	out, err := ChangedResourcesTable{}.Render(&BlockContext{Target: "markdown", Report: r},
+		map[string]any{"impact": "critical,high", "actions": "all"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, keep := range []string{"db", "web", "old"} {
+		if !strings.Contains(out, keep) {
+			t.Errorf("impact filter dropped %q which should be kept:\n%s", keep, out)
+		}
+	}
+	for _, drop := range []string{"app", "main"} {
+		if strings.Contains(out, "| "+drop+" ") {
+			t.Errorf("impact filter kept %q which should be dropped:\n%s", drop, out)
+		}
+	}
+}
+
+func TestChangedResourcesTable_filterModules(t *testing.T) {
+	r := crtReport()
+	out, err := ChangedResourcesTable{}.Render(&BlockContext{Target: "markdown", Report: r},
+		map[string]any{"modules": "nsg", "actions": "all"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "web") || !strings.Contains(out, "old") {
+		t.Errorf("expected nsg's resources present, got:\n%s", out)
+	}
+	if strings.Contains(out, "app") || strings.Contains(out, " db ") {
+		t.Errorf("expected vnet's resources dropped, got:\n%s", out)
+	}
+}
+
+func TestChangedResourcesTable_filterResourceTypes(t *testing.T) {
+	r := crtReport()
+	out, err := ChangedResourcesTable{}.Render(&BlockContext{Target: "markdown", Report: r},
+		map[string]any{"resource_types": "azurerm_subnet", "actions": "all"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "app") || !strings.Contains(out, "db") {
+		t.Errorf("expected subnet rows kept, got:\n%s", out)
+	}
+	if strings.Contains(out, "web") || strings.Contains(out, "old") || strings.Contains(out, "main") {
+		t.Errorf("expected non-subnet rows dropped, got:\n%s", out)
+	}
+}
+
+func TestChangedResourcesTable_filterIsImport(t *testing.T) {
+	r := crtReport()
+	// Only imports.
+	out, err := ChangedResourcesTable{}.Render(&BlockContext{Target: "markdown", Report: r},
+		map[string]any{"is_import": "true", "actions": "all"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "main") {
+		t.Errorf("is_import=true should keep the imported row, got:\n%s", out)
+	}
+	if strings.Contains(out, "app") || strings.Contains(out, " db ") {
+		t.Errorf("is_import=true should drop non-imports, got:\n%s", out)
+	}
+	// Only non-imports.
+	out, err = ChangedResourcesTable{}.Render(&BlockContext{Target: "markdown", Report: r},
+		map[string]any{"is_import": "false", "actions": "all"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "main") {
+		t.Errorf("is_import=false should drop the imported row, got:\n%s", out)
+	}
+}
+
+func TestChangedResourcesTable_isImportColumn(t *testing.T) {
+	r := crtReport()
+	out, err := ChangedResourcesTable{}.Render(&BlockContext{Target: "markdown", Report: r},
+		map[string]any{"columns": "name,is_import", "actions": "all"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "♻️ yes") {
+		t.Errorf("want ♻️ yes for imported resource, got:\n%s", out)
+	}
+}
+
 func TestChangedResourcesTable_max(t *testing.T) {
 	r := syntheticReport("a", syntheticGroup("m",
 		core.ResourceChange{Address: "a", ResourceType: "t", ResourceName: "one", Action: core.ActionUpdate, ChangedAttributes: []core.ChangedAttribute{{Key: "k"}}},

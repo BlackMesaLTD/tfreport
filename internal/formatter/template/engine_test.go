@@ -38,6 +38,91 @@ func TestEngine_renderZeroArgProperties(t *testing.T) {
 	}
 }
 
+// ----- count_where / resources (Phase 5b) -----
+
+func whereReport() *core.Report {
+	return &core.Report{
+		Label: "r",
+		ModuleGroups: []core.ModuleGroup{
+			{
+				Name: "vnet", Path: "module.vnet",
+				Changes: []core.ResourceChange{
+					{Address: "module.vnet.azurerm_subnet.app", ResourceType: "azurerm_subnet", Action: core.ActionUpdate, Impact: core.ImpactMedium},
+					{Address: "module.vnet.azurerm_subnet.db", ResourceType: "azurerm_subnet", Action: core.ActionDelete, Impact: core.ImpactHigh},
+					{Address: "module.vnet.azurerm_vnet.main", ResourceType: "azurerm_virtual_network", Action: core.ActionUpdate, Impact: core.ImpactLow, IsImport: true},
+				},
+			},
+			{
+				Name: "nsg", Path: "module.nsg",
+				Changes: []core.ResourceChange{
+					{Address: "module.nsg.azurerm_nsg.web", ResourceType: "azurerm_network_security_group", Action: core.ActionReplace, Impact: core.ImpactCritical},
+				},
+			},
+		},
+	}
+}
+
+func TestEngine_countWhere_action(t *testing.T) {
+	engine := New(blocks.Default())
+	out, err := engine.Render(`{{ count_where "action" "delete" }}`,
+		&blocks.BlockContext{Target: "markdown", Report: whereReport()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out) != "1" {
+		t.Errorf("want 1 delete, got %q", out)
+	}
+}
+
+func TestEngine_countWhere_multiPredicateAnd(t *testing.T) {
+	engine := New(blocks.Default())
+	out, err := engine.Render(`{{ count_where "module" "vnet" "impact" "high,medium" }}`,
+		&blocks.BlockContext{Target: "markdown", Report: whereReport()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out) != "2" {
+		t.Errorf("want 2 (app+db in vnet), got %q", out)
+	}
+}
+
+func TestEngine_countWhere_isImport(t *testing.T) {
+	engine := New(blocks.Default())
+	out, err := engine.Render(`{{ count_where "is_import" "true" }}`,
+		&blocks.BlockContext{Target: "markdown", Report: whereReport()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out) != "1" {
+		t.Errorf("want 1 import, got %q", out)
+	}
+}
+
+func TestEngine_countWhere_unknownPredicate(t *testing.T) {
+	engine := New(blocks.Default())
+	_, err := engine.Render(`{{ count_where "bogus" "x" }}`,
+		&blocks.BlockContext{Target: "markdown", Report: whereReport()})
+	if err == nil {
+		t.Fatal("expected error for unknown predicate")
+	}
+}
+
+func TestEngine_resources_filteredIteration(t *testing.T) {
+	engine := New(blocks.Default())
+	out, err := engine.Render(
+		`{{ range $rc := resources "module" "nsg" }}{{ $rc.Address }} {{ end }}`,
+		&blocks.BlockContext{Target: "markdown", Report: whereReport()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "module.nsg.azurerm_nsg.web") {
+		t.Errorf("want nsg resource, got %q", out)
+	}
+	if strings.Contains(out, "module.vnet") {
+		t.Errorf("vnet resources should be excluded, got %q", out)
+	}
+}
+
 func TestEngine_parameterizedBlock(t *testing.T) {
 	r := loadReport(t)
 	engine := New(blocks.Default())

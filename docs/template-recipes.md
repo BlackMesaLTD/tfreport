@@ -146,10 +146,7 @@ output:
 
         {{ .KeyChanges }}
 
-        {{ if eq (printf "%s" .Report.MaxImpact) "critical" -}}
-        ⛔ **This plan contains critical-impact changes (replace or force-new).**
-        Read the "Destructive" section carefully before approving.
-        {{- end }}
+        {{ banner "if_impact" "critical" "style" "alert" "text" "This plan contains critical-impact changes (replace or force-new). Read the \"Destructive\" section carefully before approving." }}
 
         ## 🗂️ Resources grouped by module
 
@@ -167,11 +164,12 @@ output:
 ```
 
 **Renders:** a friendly, verbose walkthrough. The critical-impact banner
-only appears when warranted.
+only appears when warranted (returns empty when `MaxImpact != critical`,
+so you can include it unconditionally).
 
-**Gaps exposed:** none — but every newbie template re-invents the
-glossary. *Could be offered as `{{ glossary }}` block (opt-in, hidden
-behind a `level="beginner"` arg) to save copy-paste.*
+**Gaps exposed:** the `{{ banner }}` block replaced the multi-line
+`{{ if eq (printf "%s" …) }}` dance. Teams who also want the inline
+glossary can swap the prose for `{{ glossary "level" "beginner" }}`.
 
 ---
 
@@ -234,11 +232,8 @@ output:
         - **Zero deletes or replaces expected** — we saw
           **{{ action_count "delete" }} deletes**,
           **{{ action_count "replace" }} replaces**.
-          {{- if or (gt (action_count "delete") 0) (gt (action_count "replace") 0) }}
-          ⛔ **Investigate before applying.**
-          {{- else }}
-          ✅ Clean greenfield.
-          {{- end }}
+
+        {{ banner "if_action_gt" "delete:0,replace:0" "style" "alert" "text" "Investigate before applying." }}
 
         ## 🧱 Resource-type breakdown
         {{ summary_table "group" "resource_type" }}
@@ -307,8 +302,7 @@ output:
 
         <details><summary>All imports ({{ import_count }})</summary>
 
-        {{ range $mg := .Report.ModuleGroups }}{{ range $rc := $mg.Changes }}{{ if $rc.IsImport }}- `{{ $rc.Address }}`
-        {{ end }}{{ end }}{{ end }}
+        {{ imports_list }}
 
         </details>
 
@@ -319,9 +313,9 @@ output:
 from pure imports, imports collapsed into a dropdown. Now uses the first-
 class `IsImport` flag instead of misinterpreting `read` action.
 
-**Gaps exposed:** none — `IsImport`, `action_count`, `import_count`, and
-action-filtered `changed_resources_table` all shipped. This recipe was
-the P0 motivator for the first two.
+**Gaps exposed:** none. `imports_list` retired the nested
+`{{ range }}{{ if $rc.IsImport }}…{{ end }}{{ end }}` hand-roll; the
+rest was already block-backed.
 
 ---
 
@@ -417,3 +411,27 @@ Everything in the "🔴 power-user" zone represents a **gap** we should
 consider filling. See [docs/template-design-guide.md](template-design-guide.md)
 for the gap roadmap and a heuristic for deciding when to escalate vs wait
 for a block.
+
+---
+
+## Newer blocks worth knowing
+
+Beyond the blocks the recipes above reference, tfreport ships a handful
+that unlocked the last mile of declarative templating. The full reference
+is auto-generated in [docs/blocks.md](blocks.md); the ones most worth
+calling out:
+
+| Block | What it does | Typical recipe fit |
+|-------|--------------|--------------------|
+| `{{ per_report "report" $r }}` | Renders one "report card" with target-aware wrapping (H2 on markdown, `<details>` on GitHub). | Multi-report templates — replaces the `{{ range .Reports }}<details>…{{ end }}` hand-roll. |
+| `{{ banner if_impact="…" style="alert" text="…" }}` | Conditional callout; emits empty when triggers miss. | Any recipe that wanted a one-line warning/confirmation. |
+| `{{ imports_list format="table" }}` | Enumerates `IsImport=true` resources with pluggable columns. | Bulk-import recipe. |
+| `{{ attribute_diff addresses="…" format="list" }}` | Per-attribute `key → old → new`. | Surgical-change recipe when `text_plan` is overkill. |
+| `{{ submodule_group instance="vnet" }}` | Nested `<details>` per sub-module. | Instance-focused recipes outside `instance_detail`. |
+| `{{ count_where "module" "vnet" "impact" "high,medium" }}` | Multi-predicate resource count. | Replaces `action_count` when you need more than one axis. |
+| `{{ resources "action" "delete" }}` | Filtered `[]ResourceChange` for `range`. | Any recipe that wants custom iteration without `.Report.ModuleGroups` nesting. |
+
+Most table-producing blocks (`summary_table`, `changed_resources_table`,
+`module_details`, `modules_table`, `diff_groups`, `deploy_checklist`,
+`risk_histogram`) now accept a `columns` csv for column selection; check
+`docs/blocks.md` for each block's valid column IDs.

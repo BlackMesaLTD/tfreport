@@ -23,6 +23,19 @@ type RiskHistogram struct{}
 
 func (RiskHistogram) Name() string { return "risk_histogram" }
 
+var riskHistogramColumns = []string{"impact", "count", "bar"}
+var riskHistogramHeadings = map[string]string{
+	"impact": "Impact",
+	"count":  "Count",
+	"bar":    "Bar",
+}
+
+type riskRow struct {
+	label  string
+	value  int
+	impact core.Impact
+}
+
 func (RiskHistogram) Render(ctx *BlockContext, args map[string]any) (string, error) {
 	style := ArgString(args, "style", "bar")
 	includeNone := ArgBool(args, "include_none", false)
@@ -30,19 +43,14 @@ func (RiskHistogram) Render(ctx *BlockContext, args map[string]any) (string, err
 
 	counts := tallyImpacts(ctx)
 
-	type bucket struct {
-		label  string
-		value  int
-		impact core.Impact
-	}
-	order := []bucket{
+	order := []riskRow{
 		{"🔴 critical", counts[core.ImpactCritical], core.ImpactCritical},
 		{"🔴 high", counts[core.ImpactHigh], core.ImpactHigh},
 		{"🟡 medium", counts[core.ImpactMedium], core.ImpactMedium},
 		{"🟢 low", counts[core.ImpactLow], core.ImpactLow},
 	}
 	if includeNone {
-		order = append(order, bucket{"⚪ none", counts[core.ImpactNone], core.ImpactNone})
+		order = append(order, riskRow{"⚪ none", counts[core.ImpactNone], core.ImpactNone})
 	}
 
 	switch style {
@@ -54,27 +62,51 @@ func (RiskHistogram) Render(ctx *BlockContext, args map[string]any) (string, err
 		return strings.Join(parts, " · "), nil
 
 	case "table":
-		var b strings.Builder
-		b.WriteString("| Impact | Count |\n")
-		b.WriteString("|--------|-------|\n")
-		for _, row := range order {
-			fmt.Fprintf(&b, "| %s | %d |\n", row.label, row.value)
+		// Default columns for table style: impact, count (Bar is bar-only).
+		cols := defaultCols(ArgCSV(args, "columns"), []string{"impact", "count"})
+		if err := validateColumns("risk_histogram", cols, toSet(riskHistogramColumns)); err != nil {
+			return "", err
 		}
-		return strings.TrimRight(b.String(), "\n"), nil
+		return renderRiskRows(order, cols, maxBar), nil
 
 	case "bar":
-		var b strings.Builder
-		b.WriteString("| Impact | Count | Bar |\n")
-		b.WriteString("|--------|-------|-----|\n")
-		for _, row := range order {
-			bar := renderBar(row.value, maxBar)
-			fmt.Fprintf(&b, "| %s | %d | %s |\n", row.label, row.value, bar)
+		cols := defaultCols(ArgCSV(args, "columns"), riskHistogramColumns)
+		if err := validateColumns("risk_histogram", cols, toSet(riskHistogramColumns)); err != nil {
+			return "", err
 		}
-		return strings.TrimRight(b.String(), "\n"), nil
+		return renderRiskRows(order, cols, maxBar), nil
 
 	default:
 		return "", fmt.Errorf("risk_histogram: unknown style %q (valid: bar, table, inline)", style)
 	}
+}
+
+// renderRiskRows produces the `| Impact | Count | Bar |`-style markdown
+// table using just the selected columns.
+func renderRiskRows(rows []riskRow, cols []string, maxBar int) string {
+	var b strings.Builder
+	headings := mapSlice(cols, func(id string) string { return riskHistogramHeadings[id] })
+	writeColumnHeader(&b, headings)
+	for _, row := range rows {
+		b.WriteString("|")
+		for _, col := range cols {
+			fmt.Fprintf(&b, " %s |", renderRiskCell(row, col, maxBar))
+		}
+		b.WriteString("\n")
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+func renderRiskCell(row riskRow, col string, maxBar int) string {
+	switch col {
+	case "impact":
+		return row.label
+	case "count":
+		return fmt.Sprintf("%d", row.value)
+	case "bar":
+		return renderBar(row.value, maxBar)
+	}
+	return ""
 }
 
 // tallyImpacts counts resources by impact across all reports in ctx.
@@ -116,11 +148,17 @@ func firstWord(s string) string {
 func (RiskHistogram) Doc() BlockDoc {
 	return BlockDoc{
 		Name:    "risk_histogram",
-		Summary: "Impact-level distribution across all resources in scope. Three visual styles (bar table, inline one-liner).",
+		Summary: "Impact-level distribution across all resources in scope. Three visual styles (bar/table/inline one-liner).",
 		Args: []ArgDoc{
-			{Name: "style", Type: "string", Default: "bar", Description: "One of `bar` (table with unicode bars), `table` (no bar column), `inline` (single line)."},
+			{Name: "style", Type: "string", Default: "bar", Description: "One of `bar` (table with unicode bars), `table` (no bar column by default), `inline` (single line)."},
+			{Name: "columns", Type: "csv", Default: "(bar: impact,count,bar; table: impact,count)", Description: "Subset of columns for table/bar styles. Ignored for inline."},
 			{Name: "include_none", Type: "bool", Default: "false", Description: "Include `impact=none` (no-op) in output."},
 			{Name: "max_bar", Type: "int", Default: "40", Description: "Cap bar length; counts above this truncate with a `+` marker."},
+		},
+		Columns: []ColumnDoc{
+			{ID: "impact", Heading: "Impact", Description: "Impact label (emoji + name)."},
+			{ID: "count", Heading: "Count", Description: "Resource count at this impact level."},
+			{ID: "bar", Heading: "Bar", Description: "Unicode block bar; width == count (capped at max_bar)."},
 		},
 	}
 }
