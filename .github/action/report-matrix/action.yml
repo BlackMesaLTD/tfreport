@@ -2,22 +2,18 @@ name: tfreport-report-matrix
 description: Download tfreport-prepare artifacts, aggregate them into a cross-report summary, and send it to GitHub — the one-step version for multi-subscription matrix workflows
 author: Black Mesa Ltd
 
-# Preset wiring the download + aggregate + send primitives:
-#   tfreport/.github/action/download → aggregate → send
+# Self-contained: all binary-install, artifact-download, aggregate, and send
+# logic is inlined (or sourced from scripts/). No sibling `uses:` refs, so
+# there's no internal version coordination to worry about at release time.
 #
 # The prepare primitive still runs inside each matrix leg (it can't be
 # wrapped because the matrix expansion isn't known until the plan job
 # produces artifacts). This preset handles everything downstream.
 #
-# Empty-state handling: when tfreport-download finds zero artifacts,
-# the preset writes `empty-message` to the output file and still runs
-# send — so the PR body / step summary / sticky comment reflects
-# "no changes" rather than failing the job.
-#
-# Internal refs are pinned to the tfreport release version (currently
-# v0.0.3) — composite actions do not support expressions in `uses:`, so
-# every release bump requires updating the hardcoded refs in this file
-# and report-plan/action.yml before cutting the tag.
+# Empty-state handling: when zero matching artifacts are found, writes
+# `empty-message` to the output file and still runs send — so the PR body
+# / step summary / sticky comment reflects "no changes" rather than
+# failing the job.
 
 inputs:
   # Download
@@ -26,13 +22,17 @@ inputs:
     required: false
     default: "latest"
   artifact-pattern:
-    description: "Artifact name pattern to download (default matches tfreport-prepare's output)"
+    description: "Artifact name pattern to download (same glob syntax as actions/download-artifact). Default matches what tfreport-prepare uploads."
     required: false
     default: "tfreport-*"
   artifact-path:
     description: "Local download path. Default: $RUNNER_TEMP/tfreport-downloads."
     required: false
     default: ""
+  report-filename:
+    description: "Filename inside each downloaded artifact containing the tfreport JSON."
+    required: false
+    default: "report.json"
 
   # Aggregate
   target:
@@ -79,53 +79,121 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Resolve output path
+    - name: Resolve paths
       id: resolve
       shell: bash
       env:
-        INPUT_OUTPUT_FILE: ${{ inputs.output-file }}
+        INPUT_OUTPUT_FILE:   ${{ inputs.output-file }}
+        INPUT_ARTIFACT_PATH: ${{ inputs.artifact-path }}
       run: |
         if [ -n "$INPUT_OUTPUT_FILE" ]; then
-          path="$INPUT_OUTPUT_FILE"
+          output_path="$INPUT_OUTPUT_FILE"
         else
-          path="$RUNNER_TEMP/tfreport-snippet.md"
+          output_path="$RUNNER_TEMP/tfreport-snippet.md"
         fi
-        mkdir -p "$(dirname "$path")"
-        echo "path=$path" >> "$GITHUB_OUTPUT"
+        mkdir -p "$(dirname "$output_path")"
+        if [ -z "$INPUT_ARTIFACT_PATH" ]; then
+          INPUT_ARTIFACT_PATH="$RUNNER_TEMP/tfreport-downloads"
+        fi
+        mkdir -p "$INPUT_ARTIFACT_PATH"
+        {
+          echo "output_path=$output_path"
+          echo "artifact_path=$INPUT_ARTIFACT_PATH"
+        } >> "$GITHUB_OUTPUT"
 
-    - name: Download
-      id: download
-      uses: BlackMesaLTD/tfreport/.github/action/download@v0.0.3
+    - name: Download artifacts
+      uses: actions/download-artifact@v4
+      continue-on-error: true
       with:
         pattern: ${{ inputs.artifact-pattern }}
-        path:    ${{ inputs.artifact-path }}
+        path:    ${{ steps.resolve.outputs.artifact_path }}
 
-    - name: Aggregate
-      if: ${{ steps.download.outputs.count != '0' }}
-      uses: BlackMesaLTD/tfreport/.github/action/aggregate@v0.0.3
-      with:
-        version:       ${{ inputs.version }}
-        target:        ${{ inputs.target }}
-        report-files:  ${{ steps.download.outputs.reports }}
-        config:        ${{ inputs.config }}
-        changed-only:  ${{ inputs.changed-only }}
-        output-file:   ${{ steps.resolve.outputs.path }}
-
-    - name: Empty-state fallback
-      if: ${{ steps.download.outputs.count == '0' }}
+    - name: Inventory downloads
+      id: inventory
       shell: bash
       env:
-        OUTPUT_PATH:   ${{ steps.resolve.outputs.path }}
+        DL_PATH:         ${{ steps.resolve.outputs.artifact_path }}
+        REPORT_FILENAME: ${{ inputs.report-filename }}
+      run: |
+        paths=""
+        if [ -d "$DL_PATH" ]; then
+          paths=$(find "$DL_PATH" -type f -name "$REPORT_FILENAME" 2>/dev/null | sort)
+        fi
+        if [ -z "$paths" ]; then
+          count=0
+        else
+          count=$(printf '%s\n' "$paths" | wc -l | tr -d ' ')
+        fi
+        {
+          echo "count=$count"
+          echo "reports<<TFR_EOF"
+          printf '%s' "$paths"
+          echo ""
+          echo "TFR_EOF"
+        } >> "$GITHUB_OUTPUT"
+        echo "Found $count report file(s) matching '$REPORT_FILENAME' under $DL_PATH"
+
+    - name: Install tfreport
+      if: ${{ steps.inventory.outputs.count != '0' }}
+      shell: bash
+      env:
+        TFREPORT_VERSION: ${{ inputs.version }}
+      run: bash "$GITHUB_ACTION_PATH/../../../scripts/install-tfreport.sh"
+
+    - name: Aggregate
+      if: ${{ steps.inventory.outputs.count != '0' }}
+      shell: bash
+      env:
+        INPUT_REPORT_FILES: ${{ steps.inventory.outputs.reports }}
+        INPUT_TARGET:       ${{ inputs.target }}
+        INPUT_CONFIG:       ${{ inputs.config }}
+        INPUT_CHANGED_ONLY: ${{ inputs.changed-only }}
+        OUTPUT_PATH:        ${{ steps.resolve.outputs.output_path }}
+      run: |
+        shopt -s nullglob
+        reports=()
+        while IFS= read -r line; do
+          line="${line## }"; line="${line%% }"
+          [ -z "$line" ] && continue
+          for p in $line; do reports+=("$p"); done
+        done <<< "$INPUT_REPORT_FILES"
+
+        if [ ${#reports[@]} -eq 0 ]; then
+          echo "::error::tfreport-report-matrix: inventory reported files but none resolved"
+          exit 1
+        fi
+
+        echo "Aggregating ${#reports[@]} report(s):"
+        printf '  %s\n' "${reports[@]}"
+
+        ARGS=(--target "$INPUT_TARGET")
+        for r in "${reports[@]}"; do ARGS+=(--report-file "$r"); done
+        if [ -n "$INPUT_CONFIG" ]; then
+          ARGS+=(--config "$INPUT_CONFIG")
+        fi
+        if [ "$INPUT_CHANGED_ONLY" = "true" ]; then
+          ARGS+=(--changed-only)
+        fi
+
+        tfreport "${ARGS[@]}" > "$OUTPUT_PATH"
+        echo "Wrote $(wc -c < "$OUTPUT_PATH") bytes to $OUTPUT_PATH"
+
+    - name: Empty-state fallback
+      if: ${{ steps.inventory.outputs.count == '0' }}
+      shell: bash
+      env:
+        OUTPUT_PATH:   ${{ steps.resolve.outputs.output_path }}
         EMPTY_MESSAGE: ${{ inputs.empty-message }}
       run: |
         printf '%s\n' "$EMPTY_MESSAGE" > "$OUTPUT_PATH"
 
     - name: Send
-      uses: BlackMesaLTD/tfreport/.github/action/send@v0.0.3
-      with:
-        content-file:       ${{ steps.resolve.outputs.path }}
-        step-summary:       ${{ inputs.step-summary }}
-        pr-body-marker:     ${{ inputs.pr-body-marker }}
-        pr-comment-marker:  ${{ inputs.pr-comment-marker }}
-        github-token:       ${{ inputs.github-token }}
-        pr-number:          ${{ inputs.pr-number }}
+      shell: bash
+      env:
+        INPUT_CONTENT_FILE:      ${{ steps.resolve.outputs.output_path }}
+        INPUT_STEP_SUMMARY:      ${{ inputs.step-summary }}
+        INPUT_PR_BODY_MARKER:    ${{ inputs.pr-body-marker }}
+        INPUT_PR_COMMENT_MARKER: ${{ inputs.pr-comment-marker }}
+        INPUT_GITHUB_TOKEN:      ${{ inputs.github-token }}
+        INPUT_PR_NUMBER:         ${{ inputs.pr-number }}
+      run: python3 "$GITHUB_ACTION_PATH/../../../scripts/send-report.py"

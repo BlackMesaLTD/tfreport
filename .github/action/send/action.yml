@@ -44,4 +44,4 @@ runs:
         INPUT_PR_COMMENT_MARKER: ${{ inputs.pr-comment-marker }}
         INPUT_GITHUB_TOKEN: ${{ inputs.github-token }}
         INPUT_PR_NUMBER: ${{ inputs.pr-number }}
-      run: python3 "$GITHUB_ACTION_PATH/send.py"
+      run: python3 "$GITHUB_ACTION_PATH/../../../scripts/send-report.py"

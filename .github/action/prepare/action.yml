@@ -37,11 +37,15 @@ inputs:
     description: |
       Custom metadata to attach to the exported report, one `key: value` per
       line (YAML block syntax). Survives JSON round-trip and is accessible in
-      templates as `{{ $r.Custom.<key> }}`. Use this for subscription IDs,
-      owner names, environment tags — anything that isn't derivable from the
-      plan itself. Example:
+      templates as `{{ $r.Custom.<key> }}`. Use for subscription IDs, owner
+      names, environment tags, workflow URLs — anything that isn't derivable
+      from the plan itself.
+
+      Values are treated as LITERAL STRINGS. Do not wrap in quotes — quotes
+      are preserved in the value. Multi-line values and YAML escape sequences
+      are not supported. Example:
         custom: |
-          sub_id: ${{ matrix.ID }}
+          workflow_url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           owner: platform-team
     required: false
   artifact-name:
@@ -105,27 +109,8 @@ runs:
     - name: Install tfreport
       shell: bash
       env:
-        INPUT_VERSION: ${{ inputs.version }}
-      run: |
-        VERSION="$INPUT_VERSION"
-        if [ "$VERSION" = "latest" ]; then
-          VERSION=$(curl -s https://api.github.com/repos/BlackMesaLTD/tfreport/releases/latest | grep tag_name | cut -d '"' -f 4)
-        fi
-        VERSION="${VERSION#v}"
-        OS=$(uname -s | tr '[:upper:]' '[:lower:]')
-        ARCH=$(uname -m)
-        case "$ARCH" in
-          x86_64) ARCH="amd64" ;;
-          aarch64) ARCH="arm64" ;;
-        esac
-        BASE_URL="https://github.com/BlackMesaLTD/tfreport/releases/download/v${VERSION}"
-        ARCHIVE="tfreport_${VERSION}_${OS}_${ARCH}.tar.gz"
-        curl -sL "${BASE_URL}/${ARCHIVE}" -o "/tmp/${ARCHIVE}"
-        curl -sL "${BASE_URL}/checksums.txt" -o /tmp/checksums.txt
-        cd /tmp && grep "${ARCHIVE}" checksums.txt | sha256sum --check --strict
-        tar xzf "/tmp/${ARCHIVE}" -C /usr/local/bin tfreport
-        chmod +x /usr/local/bin/tfreport
-        rm -f "/tmp/${ARCHIVE}" /tmp/checksums.txt
+        TFREPORT_VERSION: ${{ inputs.version }}
+      run: bash "$GITHUB_ACTION_PATH/../../../scripts/install-tfreport.sh"
 
     - name: Run tfreport (JSON export)
       id: run
@@ -166,35 +151,12 @@ runs:
           ARGS+=(--changed-only)
         fi
 
-        # Parse `key: value` lines (YAML-block input) into repeated --custom
-        # flags. Blank lines and `#` comments skipped. Only the first `:`
-        # splits each line, so values may contain colons.
-        if [ -n "$INPUT_CUSTOM" ]; then
-          while IFS= read -r line; do
-            line="${line%%#*}"
-            line="${line#"${line%%[![:space:]]*}"}"
-            line="${line%"${line##*[![:space:]]}"}"
-            [ -z "$line" ] && continue
-            case "$line" in
-              *:*) ;;
-              *)
-                echo "::error::tfreport-prepare: 'custom' line missing ':' — $line"
-                exit 1
-                ;;
-            esac
-            key="${line%%:*}"
-            value="${line#*:}"
-            key="${key#"${key%%[![:space:]]*}"}"
-            key="${key%"${key##*[![:space:]]}"}"
-            value="${value#"${value%%[![:space:]]*}"}"
-            value="${value%"${value##*[![:space:]]}"}"
-            if [ -z "$key" ]; then
-              echo "::error::tfreport-prepare: 'custom' line has empty key — $line"
-              exit 1
-            fi
-            ARGS+=(--custom "${key}=${value}")
-          done <<< "$INPUT_CUSTOM"
-        fi
+        # Translate the YAML-block `custom:` input into repeated --custom flags.
+        mapfile -t CUSTOM_ARGS < <(
+          TFREPORT_INPUT_CUSTOM="$INPUT_CUSTOM" \
+          bash "$GITHUB_ACTION_PATH/../../../scripts/parse-custom-input.sh"
+        )
+        ARGS+=("${CUSTOM_ARGS[@]}")
 
         tfreport "${ARGS[@]}" > "$REPORT_FILE"
 
