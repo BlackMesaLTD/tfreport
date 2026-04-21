@@ -397,6 +397,90 @@ block for per-resource dedup when that's what you actually want.
 
 ---
 
+## Matrix deploy checklist (tickbox summary + details)
+
+**Who:** change-control reviewer who screenshots the PR body summary and
+pastes it into a change ticket; also the on-call SRE who wants one-click
+navigation from the PR to the workflow run.
+
+**Scenario:** multi-subscription matrix plan (10+ subs). The reviewer
+needs: (1) a tickbox line per sub (for the change-control screenshot),
+(2) a link to the plan workflow run per sub, (3) the subscription ID
+next to the name for post-incident forensics, and (4) the per-sub module
+details in a collapsible dropdown for the actual review.
+
+**Prerequisite:** the `prepare` step attaches sub metadata via `custom:`
+(available from `@v0.0.5+`):
+
+```yaml
+- uses: BlackMesaLTD/tfreport/.github/action/prepare@v0.0.5
+  with:
+    plan-file: ./subscriptions/${{ matrix.subscription }}/plan.show.json
+    text-plan-file: ./subscriptions/${{ matrix.subscription }}/plan.show.txt
+    label: ${{ matrix.subscription }}
+    config: .tfreport.yml
+    custom: |
+      sub_id: ${{ matrix.subscription_id }}
+      workflow_url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+```
+
+**The template:**
+
+```yaml
+output:
+  targets:
+    github-pr-body:
+      template: |
+        <!-- BEGIN_SUB_SUMMARY -->
+        {{- range $r := .Reports }}
+        {{- $subID       := index $r.Custom "sub_id"       | default "—" -}}
+        {{- $workflowURL := index $r.Custom "workflow_url" | default "" -}}
+        {{- $label       := $r.Label | default "default" }}
+        - [ ] {{ $label }} - `{{ $subID }}` ~ {{ if $workflowURL -}}
+          [**Summary:**]({{ $workflowURL }})
+        {{- else -}}
+          **Summary:**
+        {{- end }} `{{ $r.MaxImpact }}`
+        {{- end }}
+        <!-- END_SUB_SUMMARY -->
+
+        {{ range $r := .Reports }}
+        <details>
+        <summary><code>{{ $r.Label }}</code> — {{ $r.TotalResources }} resource change{{ if ne $r.TotalResources 1 }}s{{ end }}</summary>
+
+        {{ modules_table "report" $r "columns" "module_type,module,changed_attrs" }}
+        </details>
+
+        {{ end -}}
+```
+
+**Renders:**
+
+```
+<!-- BEGIN_SUB_SUMMARY -->
+- [ ] sub-alpha - `00000000-0000-0000-0000-000000000001` ~ [**Summary:**](https://github.com/example-org/example-repo/actions/runs/11111111) `high`
+- [ ] sub-beta  - `00000000-0000-0000-0000-000000000002` ~ [**Summary:**](https://github.com/example-org/example-repo/actions/runs/22222222) `medium`
+<!-- END_SUB_SUMMARY -->
+
+<details><summary><code>sub-alpha</code> — 4 resource changes</summary>
+| Module type | Module | Changed attributes |
+| `virtual_network` | `vnet` | `tags` |
+…
+</details>
+```
+
+The tickboxes live OUTSIDE the `<details>` wrapper because GitHub markdown
+doesn't render interactive checkboxes inside collapsibles. The `|
+default "—"` fallbacks mean the template still renders cleanly when a
+report is loaded locally (replaying a saved JSON) with no env context.
+
+**Gaps exposed:** none — `Report.Custom` + the `index … | default`
+pattern replaces what was previously a purpose-built shell script that
+munged workflow YAML and report JSON together. Every piece of metadata
+the template uses came from the prepare step's `custom:` input.
+
+---
+
 ## Where to go next
 
 All of the above templates fall into one of three zones:

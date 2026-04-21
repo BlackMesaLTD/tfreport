@@ -2,7 +2,10 @@ package cli
 
 import (
 	"os"
+	"strings"
 	"testing"
+
+	"github.com/BlackMesaLTD/tfreport/internal/core"
 )
 
 func TestReadPlanJSONFromFile(t *testing.T) {
@@ -94,6 +97,103 @@ func TestParseCustomFlags(t *testing.T) {
 			t.Errorf("expected trimmed key 'owner', got %v", got)
 		}
 	})
+}
+
+func TestApplyCustomFlags_mergesOntoEmpty(t *testing.T) {
+	r := &core.Report{}
+	if err := applyCustomFlags(r, []string{"sub_id=abc", "owner=me"}); err != nil {
+		t.Fatal(err)
+	}
+	if r.Custom["sub_id"] != "abc" || r.Custom["owner"] != "me" {
+		t.Errorf("merge failed: %v", r.Custom)
+	}
+}
+
+func TestApplyCustomFlags_cliOverridesReportFileValue(t *testing.T) {
+	// Simulates the --report-file x.json case where the loaded report
+	// already carries Custom, and --custom on the CLI overrides specific keys.
+	r := &core.Report{
+		Custom: map[string]string{
+			"sub_id": "from-file",
+			"owner":  "original-owner",
+		},
+	}
+	if err := applyCustomFlags(r, []string{"sub_id=from-cli"}); err != nil {
+		t.Fatal(err)
+	}
+	// CLI wins on sub_id
+	if r.Custom["sub_id"] != "from-cli" {
+		t.Errorf("CLI should override file value: got %q", r.Custom["sub_id"])
+	}
+	// File value preserved for untouched keys
+	if r.Custom["owner"] != "original-owner" {
+		t.Errorf("untouched file value should survive: got %q", r.Custom["owner"])
+	}
+}
+
+func TestApplyCustomFlags_noFlagsIsNoOp(t *testing.T) {
+	r := &core.Report{Custom: map[string]string{"k": "v"}}
+	if err := applyCustomFlags(r, nil); err != nil {
+		t.Fatal(err)
+	}
+	if r.Custom["k"] != "v" || len(r.Custom) != 1 {
+		t.Errorf("no-op failed: %v", r.Custom)
+	}
+}
+
+func TestApplyCustomFlags_propagatesParseError(t *testing.T) {
+	r := &core.Report{}
+	err := applyCustomFlags(r, []string{"no-equals-sign"})
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+}
+
+// TestExecute_rejectsCustomInMultiReportMode exercises the runtime guard in
+// run() that prevents --custom from being silently ignored when multiple
+// --report-file inputs are supplied (metadata must be set per-report at
+// prepare time, not at aggregation time).
+func TestExecute_rejectsCustomInMultiReportMode(t *testing.T) {
+	// Create two valid report JSONs.
+	writeTemp := func(t *testing.T, body string) string {
+		t.Helper()
+		f, err := os.CreateTemp("", "report-*.json")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.WriteString(body); err != nil {
+			t.Fatal(err)
+		}
+		f.Close()
+		return f.Name()
+	}
+	reportJSON := `{"module_groups":[],"total_resources":0,"action_counts":{},"max_impact":""}`
+	f1 := writeTemp(t, reportJSON)
+	f2 := writeTemp(t, reportJSON)
+	defer os.Remove(f1)
+	defer os.Remove(f2)
+
+	// Reset global flags between runs — rootCmd keeps state across Execute calls.
+	flagReportFiles = nil
+	flagCustom = nil
+	defer func() {
+		flagReportFiles = nil
+		flagCustom = nil
+	}()
+
+	rootCmd.SetArgs([]string{
+		"--report-file", f1,
+		"--report-file", f2,
+		"--custom", "sub_id=abc",
+		"--quiet",
+	})
+	err := rootCmd.Execute()
+	if err == nil {
+		t.Fatal("expected error for --custom in multi-report mode")
+	}
+	if !strings.Contains(err.Error(), "multi-report mode") {
+		t.Errorf("error should mention multi-report mode: %v", err)
+	}
 }
 
 func TestExecuteWithFile(t *testing.T) {

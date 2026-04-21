@@ -171,7 +171,7 @@ Single plan:    render → send
 Matrix:         prepare (per sub) → download → aggregate → send
 ```
 
-Presets wire the stages together; they internally reference primitives via `@${{ github.action_ref }}` so version drift between a preset and the primitives it uses is impossible.
+Presets and primitives are each self-contained — no composite action references any sibling composite. Shared shell/python logic (binary install, custom-input parsing, the send logic) lives in `scripts/`. Pinning `@vX.Y.Z` on an outer action is the only version coordination needed.
 
 ### Single plan — `report-plan` preset
 

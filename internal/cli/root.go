@@ -110,18 +110,8 @@ func run(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	custom, err := parseCustomFlags(flagCustom)
-	if err != nil {
+	if err := applyCustomFlags(report, flagCustom); err != nil {
 		return err
-	}
-	if len(custom) > 0 {
-		if report.Custom == nil {
-			report.Custom = custom
-		} else {
-			for k, v := range custom {
-				report.Custom[k] = v
-			}
-		}
 	}
 
 	moduleTypeDescriptions, err := loadModuleTypeDescriptions(cfg)
@@ -295,6 +285,29 @@ func resolveTemplatePath(configDir, relPath string) (string, error) {
 		return "", fmt.Errorf("template_file: path escapes config directory: %q", relPath)
 	}
 	return joined, nil
+}
+
+// applyCustomFlags parses --custom entries and merges them onto
+// report.Custom. CLI values take precedence over any Custom map already
+// present on the report (relevant when loaded from a --report-file whose
+// JSON already contains custom metadata). A nil or empty flag list is a
+// no-op. Parse errors bubble up with the offending entry.
+func applyCustomFlags(report *core.Report, flags []string) error {
+	custom, err := parseCustomFlags(flags)
+	if err != nil {
+		return err
+	}
+	if len(custom) == 0 {
+		return nil
+	}
+	if report.Custom == nil {
+		report.Custom = custom
+		return nil
+	}
+	for k, v := range custom {
+		report.Custom[k] = v
+	}
+	return nil
 }
 
 // parseCustomFlags converts a slice of "key=value" strings from the

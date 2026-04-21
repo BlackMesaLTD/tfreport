@@ -107,6 +107,53 @@ func TestEngine_countWhere_unknownPredicate(t *testing.T) {
 	}
 }
 
+// TestEngine_customMapAccess confirms that $r.Custom is visible to
+// templates and that both dot-access (for simple keys) and `index` lookup
+// (for any key) work, returning empty string for missing keys.
+func TestEngine_customMapAccess(t *testing.T) {
+	r := &core.Report{
+		Label: "sub-a",
+		Custom: map[string]string{
+			"sub_id":       "00000000-0000-0000-0000-000000000001",
+			"workflow_url": "https://github.com/example-org/example-repo/actions/runs/123",
+		},
+	}
+	engine := New(blocks.Default())
+
+	// Dot access on Go-identifier-safe key.
+	out, err := engine.Render(
+		`{{ .Report.Custom.sub_id }}`,
+		&blocks.BlockContext{Target: "markdown", Report: r})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out) != "00000000-0000-0000-0000-000000000001" {
+		t.Errorf("dot-access: got %q", out)
+	}
+
+	// Index lookup on any key.
+	out, err = engine.Render(
+		`{{ index .Report.Custom "workflow_url" }}`,
+		&blocks.BlockContext{Target: "markdown", Report: r})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "actions/runs/123") {
+		t.Errorf("index lookup: got %q", out)
+	}
+
+	// Missing key returns empty — pipe through Sprig default for safety.
+	out, err = engine.Render(
+		`{{ index .Report.Custom "missing" | default "fallback" }}`,
+		&blocks.BlockContext{Target: "markdown", Report: r})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out) != "fallback" {
+		t.Errorf("missing-key default: got %q", out)
+	}
+}
+
 func TestEngine_resources_filteredIteration(t *testing.T) {
 	engine := New(blocks.Default())
 	out, err := engine.Render(
