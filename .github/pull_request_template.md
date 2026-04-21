@@ -10,7 +10,6 @@
      CI covers unit and integration; mention anything not covered there. -->
 
 - [ ] `go test -race ./...` passes locally
-- [ ] `./scripts/check-secrets.sh` passes
 - [ ] Output-affecting change: rendered against `testdata/` fixtures and the diff looks right
 
 ## Breaking changes
