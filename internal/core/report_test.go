@@ -212,6 +212,88 @@ func TestLabelRoundTrip(t *testing.T) {
 	}
 }
 
+func TestCustomRoundTrip(t *testing.T) {
+	data, err := os.ReadFile("../../testdata/small_plan.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := GenerateReport(data, ReportOptions{ChangedOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	report.Custom = map[string]string{
+		"sub_id": "00000000-0000-0000-0000-000000000001",
+		"owner":  "platform-team",
+	}
+
+	marshaled, err := MarshalReport(report)
+	if err != nil {
+		t.Fatalf("MarshalReport: %v", err)
+	}
+
+	// Verify custom appears in the JSON.
+	var raw map[string]any
+	if err := json.Unmarshal(marshaled, &raw); err != nil {
+		t.Fatal(err)
+	}
+	custom, ok := raw["custom"].(map[string]any)
+	if !ok {
+		t.Fatalf("JSON custom not a map: %v", raw["custom"])
+	}
+	if custom["sub_id"] != "00000000-0000-0000-0000-000000000001" {
+		t.Errorf("custom.sub_id = %v, want placeholder GUID", custom["sub_id"])
+	}
+	if custom["owner"] != "platform-team" {
+		t.Errorf("custom.owner = %v, want platform-team", custom["owner"])
+	}
+
+	// Round-trip back.
+	restored, err := UnmarshalReport(marshaled)
+	if err != nil {
+		t.Fatalf("UnmarshalReport: %v", err)
+	}
+	if len(restored.Custom) != 2 {
+		t.Errorf("restored Custom len = %d, want 2", len(restored.Custom))
+	}
+	if restored.Custom["sub_id"] != "00000000-0000-0000-0000-000000000001" {
+		t.Errorf("restored Custom.sub_id = %q", restored.Custom["sub_id"])
+	}
+}
+
+func TestCustomBackwardCompat(t *testing.T) {
+	// JSON without a custom field should deserialize with nil Custom (not crash).
+	data, err := os.ReadFile("../../testdata/small_plan.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := GenerateReport(data, ReportOptions{ChangedOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Custom is nil at this point.
+	marshaled, err := MarshalReport(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The omitempty tag should mean no "custom" key in the JSON.
+	var raw map[string]any
+	if err := json.Unmarshal(marshaled, &raw); err != nil {
+		t.Fatal(err)
+	}
+	if _, present := raw["custom"]; present {
+		t.Errorf("custom key should be absent when Report.Custom is nil, got %v", raw["custom"])
+	}
+	// Round-trip without the field.
+	restored, err := UnmarshalReport(marshaled)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.Custom != nil && len(restored.Custom) != 0 {
+		t.Errorf("restored Custom should be nil/empty, got %v", restored.Custom)
+	}
+}
+
 func TestLabelBackwardCompat(t *testing.T) {
 	// JSON without a label field should deserialize with empty label
 	data, err := os.ReadFile("../../testdata/small_plan.json")

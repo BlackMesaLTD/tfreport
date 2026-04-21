@@ -2,14 +2,9 @@ name: tfreport-report-plan
 description: Render a single Terraform plan and send it to GitHub (step summary, PR body, and/or sticky PR comment) — the one-step version for single-plan workflows
 author: Black Mesa Ltd
 
-# Preset wiring the render + send primitives:
-#   tfreport/.github/action  →  tfreport/.github/action/send
-#
-# Inputs mirror the underlying primitives. Internal refs are pinned to the
-# tfreport release version (currently v0.0.3) — composite actions do not
-# support expressions in `uses:`, so every release bump requires updating
-# the hardcoded refs in this file and report-matrix/action.yml before
-# cutting the tag.
+# Self-contained: all binary-install, render, and send logic is inlined (or
+# sourced from scripts/). No sibling `uses:` refs, so there's no internal
+# version coordination to worry about at release time.
 
 inputs:
   # Render inputs
@@ -40,6 +35,16 @@ inputs:
     description: "Show only changed resources"
     required: false
     default: "true"
+  custom:
+    description: |
+      Custom metadata to attach to the rendered report, one `key: value` per
+      line (YAML block syntax). Accessible in templates as
+      `{{ $r.Custom.<key> }}`. Values are literal strings — no YAML
+      escaping. Example:
+        custom: |
+          workflow_url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          owner: platform-team
+    required: false
   output-file:
     description: "Optional file path to persist the rendered output to. The preset always writes to a temp path regardless; use this to keep a copy at a known location."
     required: false
@@ -83,25 +88,99 @@ runs:
         mkdir -p "$(dirname "$path")"
         echo "path=$path" >> "$GITHUB_OUTPUT"
 
+    - name: Prepare plan inputs
+      id: prep
+      shell: bash
+      env:
+        INPUT_PLAN:            ${{ inputs.plan }}
+        INPUT_PLAN_FILE:       ${{ inputs.plan-file }}
+        INPUT_TEXT_PLAN_FILE:  ${{ inputs.text-plan-file }}
+      run: |
+        if [ -z "$INPUT_PLAN" ] && [ -z "$INPUT_PLAN_FILE" ]; then
+          echo "::error::tfreport-report-plan: exactly one of 'plan' or 'plan-file' must be provided"
+          exit 1
+        fi
+        if [ -n "$INPUT_PLAN" ] && [ -n "$INPUT_PLAN_FILE" ]; then
+          echo "::error::tfreport-report-plan: 'plan' and 'plan-file' are mutually exclusive"
+          exit 1
+        fi
+        if [ -n "$INPUT_TEXT_PLAN_FILE" ] && [ -z "$INPUT_PLAN_FILE" ]; then
+          echo "::error::tfreport-report-plan: 'text-plan-file' requires 'plan-file' (it is derived automatically from 'plan')"
+          exit 1
+        fi
+
+        if [ -n "$INPUT_PLAN" ]; then
+          if ! command -v terraform >/dev/null 2>&1; then
+            echo "::error::tfreport-report-plan: the 'plan' input requires terraform on PATH. Add 'hashicorp/setup-terraform@v3' before this step."
+            exit 1
+          fi
+          DERIVED=$(mktemp -d)
+          terraform show -json     "$INPUT_PLAN" > "$DERIVED/plan.json"
+          terraform show -no-color "$INPUT_PLAN" > "$DERIVED/plan.txt"
+          {
+            echo "plan_file=$DERIVED/plan.json"
+            echo "text_plan_file=$DERIVED/plan.txt"
+          } >> "$GITHUB_OUTPUT"
+        else
+          {
+            echo "plan_file=$INPUT_PLAN_FILE"
+            if [ -n "$INPUT_TEXT_PLAN_FILE" ]; then
+              echo "text_plan_file=$INPUT_TEXT_PLAN_FILE"
+            else
+              echo "text_plan_file="
+            fi
+          } >> "$GITHUB_OUTPUT"
+        fi
+
+    - name: Install tfreport
+      shell: bash
+      env:
+        TFREPORT_VERSION: ${{ inputs.version }}
+      run: bash "$GITHUB_ACTION_PATH/../../../scripts/install-tfreport.sh"
+
     - name: Render
-      uses: BlackMesaLTD/tfreport/.github/action@v0.0.3
-      with:
-        version:         ${{ inputs.version }}
-        target:          ${{ inputs.target }}
-        plan:            ${{ inputs.plan }}
-        plan-file:       ${{ inputs.plan-file }}
-        text-plan-file:  ${{ inputs.text-plan-file }}
-        label:           ${{ inputs.label }}
-        config:          ${{ inputs.config }}
-        changed-only:    ${{ inputs.changed-only }}
-        output-file:     ${{ steps.resolve.outputs.path }}
+      shell: bash
+      env:
+        INPUT_TARGET:          ${{ inputs.target }}
+        INPUT_CONFIG:          ${{ inputs.config }}
+        INPUT_CHANGED_ONLY:    ${{ inputs.changed-only }}
+        INPUT_LABEL:           ${{ inputs.label }}
+        INPUT_CUSTOM:          ${{ inputs.custom }}
+        PLAN_FILE:             ${{ steps.prep.outputs.plan_file }}
+        TEXT_PLAN_FILE:        ${{ steps.prep.outputs.text_plan_file }}
+        OUTPUT_PATH:           ${{ steps.resolve.outputs.path }}
+      run: |
+        ARGS=(--plan-file "$PLAN_FILE" --target "$INPUT_TARGET")
+        if [ -n "$TEXT_PLAN_FILE" ]; then
+          ARGS+=(--text-plan-file "$TEXT_PLAN_FILE")
+        fi
+        if [ -n "$INPUT_LABEL" ]; then
+          ARGS+=(--label "$INPUT_LABEL")
+        fi
+        if [ -n "$INPUT_CONFIG" ]; then
+          ARGS+=(--config "$INPUT_CONFIG")
+        fi
+        if [ "$INPUT_CHANGED_ONLY" = "true" ]; then
+          ARGS+=(--changed-only)
+        fi
+
+        # Translate the YAML-block `custom:` input into repeated --custom flags.
+        mapfile -t CUSTOM_ARGS < <(
+          TFREPORT_INPUT_CUSTOM="$INPUT_CUSTOM" \
+          bash "$GITHUB_ACTION_PATH/../../../scripts/parse-custom-input.sh"
+        )
+        ARGS+=("${CUSTOM_ARGS[@]}")
+
+        tfreport "${ARGS[@]}" > "$OUTPUT_PATH"
+        echo "Wrote $(wc -c < "$OUTPUT_PATH") bytes to $OUTPUT_PATH"
 
     - name: Send
-      uses: BlackMesaLTD/tfreport/.github/action/send@v0.0.3
-      with:
-        content-file:       ${{ steps.resolve.outputs.path }}
-        step-summary:       ${{ inputs.step-summary }}
-        pr-body-marker:     ${{ inputs.pr-body-marker }}
-        pr-comment-marker:  ${{ inputs.pr-comment-marker }}
-        github-token:       ${{ inputs.github-token }}
-        pr-number:          ${{ inputs.pr-number }}
+      shell: bash
+      env:
+        INPUT_CONTENT_FILE:      ${{ steps.resolve.outputs.path }}
+        INPUT_STEP_SUMMARY:      ${{ inputs.step-summary }}
+        INPUT_PR_BODY_MARKER:    ${{ inputs.pr-body-marker }}
+        INPUT_PR_COMMENT_MARKER: ${{ inputs.pr-comment-marker }}
+        INPUT_GITHUB_TOKEN:      ${{ inputs.github-token }}
+        INPUT_PR_NUMBER:         ${{ inputs.pr-number }}
+      run: python3 "$GITHUB_ACTION_PATH/../../../scripts/send-report.py"

@@ -41,27 +41,8 @@ runs:
     - name: Install tfreport
       shell: bash
       env:
-        INPUT_VERSION: ${{ inputs.version }}
-      run: |
-        VERSION="$INPUT_VERSION"
-        if [ "$VERSION" = "latest" ]; then
-          VERSION=$(curl -s https://api.github.com/repos/BlackMesaLTD/tfreport/releases/latest | grep tag_name | cut -d '"' -f 4)
-        fi
-        VERSION="${VERSION#v}"
-        OS=$(uname -s | tr '[:upper:]' '[:lower:]')
-        ARCH=$(uname -m)
-        case "$ARCH" in
-          x86_64) ARCH="amd64" ;;
-          aarch64) ARCH="arm64" ;;
-        esac
-        BASE_URL="https://github.com/BlackMesaLTD/tfreport/releases/download/v${VERSION}"
-        ARCHIVE="tfreport_${VERSION}_${OS}_${ARCH}.tar.gz"
-        curl -sL "${BASE_URL}/${ARCHIVE}" -o "/tmp/${ARCHIVE}"
-        curl -sL "${BASE_URL}/checksums.txt" -o /tmp/checksums.txt
-        cd /tmp && grep "${ARCHIVE}" checksums.txt | sha256sum --check --strict
-        tar xzf "/tmp/${ARCHIVE}" -C /usr/local/bin tfreport
-        chmod +x /usr/local/bin/tfreport
-        rm -f "/tmp/${ARCHIVE}" /tmp/checksums.txt
+        TFREPORT_VERSION: ${{ inputs.version }}
+      run: bash "$GITHUB_ACTION_PATH/../../../scripts/install-tfreport.sh"
 
     - name: Run tfreport (multi-report aggregation)
       id: run

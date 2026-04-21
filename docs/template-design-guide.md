@@ -218,6 +218,8 @@ shipped; P3 rows remain explicitly deferred.
 | `submodule_group` block (GAP-E) | `{{ submodule_group instance="vnet" depth=2 format="diff" }}` | Extracted from instance_detail's internal `writeSubmoduleGrouped`. Standalone for recipes that want nested sub-module dropdowns without the whole instance_detail wrapper. |
 | `count_where` / `resources` helpers (GAP-J) | `{{ count_where "module" "vnet" "impact" "high,medium" }}`; `{{ range resources "action" "delete" }}…{{ end }}` | Predicate-based counting + filtered iteration. Multi-predicate AND; csv values on action/impact/module* use OR. Generalization of `action_count` / `import_count`. |
 | `Block.Doc()` interface + `cmd/docgen` | `make docs` regenerates `docs/blocks.md` from registry. | Structured metadata per block (args, columns, examples). CI auto-commits regenerated docs on PR via `.github/workflows/docs.yml`. Drift-proof reference. |
+| `Report.Custom` pass-through metadata | `--custom key=value` CLI flag; `{{ $r.Custom.<key> }}` in templates. | User-supplied string/string map attached at prepare time, survives JSON round-trip. Closes the gap of "I need subscription ID / workflow URL / owner name in the template but those aren't in the plan." Flat string/string by design — nested structures encoded as JSON strings if needed. |
+| Self-contained composite actions | No composite action under `.github/action/` references any sibling composite. | Shared binary-install / custom-parse / send logic lives in `scripts/`. Eliminates the release-time coordination burden of bumping internal `@vX.Y.Z` refs in lockstep — composite `uses:` can't use expressions, so we stopped using sibling composites entirely. |
 
 ### Explicitly deferred
 
