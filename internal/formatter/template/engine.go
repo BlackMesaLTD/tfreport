@@ -123,6 +123,7 @@ func (e *Engine) buildFuncMap(ctx *blocks.BlockContext) template.FuncMap {
 	funcs["diff_groups"] = blockFunc("diff_groups")
 	funcs["fleet_homogeneity"] = blockFunc("fleet_homogeneity")
 	funcs["glossary"] = blockFunc("glossary")
+	funcs["per_report"] = blockFunc("per_report")
 
 	// Sandboxed include. Falls back to an error if no include func was bound.
 	if e.include != nil {

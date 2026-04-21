@@ -9,14 +9,9 @@
 
 ---
 
+{{/* block: per_report */}}
 {{ range $r := .Reports }}
-<details><summary>{{ if $r.Label }}{{ $r.Label }}{{ else }}default{{ end }} — {{ $r.TotalResources }} resources</summary>
-
-{{ if $r.KeyChanges }}**Key changes:**
-{{ range $kc := $r.KeyChanges }}- {{ $kc.Text }}
-{{ end }}
-{{ end }}
-</details>
+{{ per_report "report" $r }}
 
 {{ end }}
 {{/* block: footer */}}

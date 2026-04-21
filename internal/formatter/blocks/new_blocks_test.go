@@ -474,6 +474,157 @@ func TestChangedResourcesTable_max(t *testing.T) {
 	}
 }
 
+// ----- per_report -----
+
+func makePerReportReport(label string) *core.Report {
+	return &core.Report{
+		Label:          label,
+		TotalResources: 4,
+		MaxImpact:      core.ImpactHigh,
+		KeyChanges: []core.KeyChange{
+			{Text: "✅ New private endpoint: pe-web", Impact: core.ImpactLow},
+			{Text: "❗ Removing route: legacy-route", Impact: core.ImpactHigh},
+		},
+	}
+}
+
+func TestPerReport_missingReportArg(t *testing.T) {
+	_, err := PerReport{}.Render(&BlockContext{Target: "markdown"}, nil)
+	if err == nil {
+		t.Fatal("expected error for missing 'report' arg")
+	}
+	if !strings.Contains(err.Error(), "report") {
+		t.Errorf("error should mention 'report': %v", err)
+	}
+}
+
+func TestPerReport_wrongReportType(t *testing.T) {
+	_, err := PerReport{}.Render(&BlockContext{Target: "markdown"},
+		map[string]any{"report": "not a pointer"})
+	if err == nil {
+		t.Fatal("expected error for non-pointer report")
+	}
+}
+
+func TestPerReport_unknownShowItem(t *testing.T) {
+	r := makePerReportReport("sub-a")
+	_, err := PerReport{}.Render(&BlockContext{Target: "markdown", Report: r},
+		map[string]any{"report": r, "show": "bogus_block"})
+	if err == nil {
+		t.Fatal("expected error for unknown show item")
+	}
+	if !strings.Contains(err.Error(), "bogus_block") {
+		t.Errorf("error should name the bad item: %v", err)
+	}
+}
+
+func TestPerReport_markdownH2WithBullets(t *testing.T) {
+	r := makePerReportReport("sub-a")
+	out, err := PerReport{}.Render(&BlockContext{Target: "markdown", Report: r},
+		map[string]any{"report": r})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Markdown target: H2 header, subtitle, raw bullets (no "## Key Changes").
+	if !strings.HasPrefix(out, "## sub-a") {
+		t.Errorf("want H2 header prefix, got:\n%s", out)
+	}
+	if !strings.Contains(out, "**4 resources**") {
+		t.Errorf("want resources subtitle, got:\n%s", out)
+	}
+	if strings.Contains(out, "## Key Changes") {
+		t.Errorf("markdown per_report must NOT emit nested 'Key Changes' header, got:\n%s", out)
+	}
+	if !strings.Contains(out, "- ✅ New private endpoint: pe-web") {
+		t.Errorf("want key changes bullets, got:\n%s", out)
+	}
+	if strings.Contains(out, "<details>") {
+		t.Errorf("markdown must not be collapsed, got:\n%s", out)
+	}
+}
+
+func TestPerReport_prBodyCollapsedWithKeyChangesHeader(t *testing.T) {
+	r := makePerReportReport("sub-a")
+	out, err := PerReport{}.Render(&BlockContext{Target: "github-pr-body", Report: r},
+		map[string]any{"report": r})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(out, "<details><summary>sub-a — 4 resources</summary>") {
+		t.Errorf("want pr-body summary prefix, got:\n%s", out)
+	}
+	if !strings.Contains(out, "**Key changes:**") {
+		t.Errorf("pr-body per_report should include 'Key changes:' header (from key_changes block), got:\n%s", out)
+	}
+	if !strings.HasSuffix(out, "</details>") {
+		t.Errorf("want </details> suffix, got:\n%s", out)
+	}
+}
+
+func TestPerReport_prCommentCollapsedBulletsOnly(t *testing.T) {
+	r := makePerReportReport("sub-a")
+	out, err := PerReport{}.Render(&BlockContext{Target: "github-pr-comment", Report: r},
+		map[string]any{"report": r})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(out, "<details><summary>sub-a — 4 resources</summary>") {
+		t.Errorf("want pr-comment summary prefix, got:\n%s", out)
+	}
+	if strings.Contains(out, "**Key changes:**") {
+		t.Errorf("pr-comment must NOT emit 'Key changes:' label, got:\n%s", out)
+	}
+}
+
+func TestPerReport_stepSummaryIncludesImpact(t *testing.T) {
+	r := makePerReportReport("sub-a")
+	out, err := PerReport{}.Render(&BlockContext{Target: "github-step-summary", Report: r},
+		map[string]any{"report": r})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "sub-a — 4 resources, high impact") {
+		t.Errorf("step-summary summary should include impact, got:\n%s", out)
+	}
+}
+
+func TestPerReport_emptyLabelFallsBackToDefault(t *testing.T) {
+	r := &core.Report{TotalResources: 0}
+	out, err := PerReport{}.Render(&BlockContext{Target: "markdown", Report: r},
+		map[string]any{"report": r})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "## default") {
+		t.Errorf("empty label should fall back to 'default', got:\n%s", out)
+	}
+}
+
+func TestPerReport_collapseOverride(t *testing.T) {
+	r := makePerReportReport("sub-a")
+	// Force collapse on markdown.
+	out, err := PerReport{}.Render(&BlockContext{Target: "markdown", Report: r},
+		map[string]any{"report": r, "collapse": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "<details>") {
+		t.Errorf("collapse=true should force <details> even on markdown, got:\n%s", out)
+	}
+	// Force uncollapse on pr-body.
+	out, err = PerReport{}.Render(&BlockContext{Target: "github-pr-body", Report: r},
+		map[string]any{"report": r, "collapse": false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "<details>") {
+		t.Errorf("collapse=false should suppress <details> even on pr-body, got:\n%s", out)
+	}
+	if !strings.Contains(out, "## sub-a") {
+		t.Errorf("collapse=false should fall back to H2 header, got:\n%s", out)
+	}
+}
+
 func TestInstanceDetail_max(t *testing.T) {
 	// Build a report with three distinct top-level module instances.
 	r := syntheticReport("a",

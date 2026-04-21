@@ -4,13 +4,9 @@
 {{/* block: cross_sub_table */}}
 {{ .CrossSubTable }}
 
+{{/* block: per_report */}}
 {{ range $r := .Reports }}
-## {{ if $r.Label }}{{ $r.Label }}{{ else }}default{{ end }}
-
-**{{ $r.TotalResources }} resources**
-
-{{ range $kc := $r.KeyChanges }}- {{ $kc.Text }}
-{{ end }}
+{{ per_report "report" $r }}
 
 {{ end }}
 {{/* block: footer */}}

@@ -8,6 +8,7 @@
 | sub-b | 12 | ❗ high | 4 create, 6 update, 2 delete |
 
 
+
 <details><summary>sub-a — 4 resources, high impact</summary>
 
 - ✅ New private endpoint: pe-web
