@@ -112,6 +112,7 @@ func (e *Engine) buildFuncMap(ctx *blocks.BlockContext) template.FuncMap {
 	funcs["key_changes"] = blockFunc("key_changes")
 	funcs["instance_detail"] = blockFunc("instance_detail")
 	funcs["module_details"] = blockFunc("module_details")
+	funcs["modules_table"] = blockFunc("modules_table")
 	funcs["text_plan"] = blockFunc("text_plan")
 	funcs["changed_resources_table"] = blockFunc("changed_resources_table")
 	funcs["deploy_checklist"] = blockFunc("deploy_checklist")
@@ -122,6 +123,7 @@ func (e *Engine) buildFuncMap(ctx *blocks.BlockContext) template.FuncMap {
 	funcs["diff_groups"] = blockFunc("diff_groups")
 	funcs["fleet_homogeneity"] = blockFunc("fleet_homogeneity")
 	funcs["glossary"] = blockFunc("glossary")
+	funcs["per_report"] = blockFunc("per_report")
 
 	// Sandboxed include. Falls back to an error if no include func was bound.
 	if e.include != nil {
@@ -136,6 +138,7 @@ func (e *Engine) buildFuncMap(ctx *blocks.BlockContext) template.FuncMap {
 	funcs["action_emoji"] = func(a string) string { return core.ActionEmoji(core.Action(a)) }
 	funcs["impact_emoji"] = func(i string) string { return core.ImpactEmoji(core.Impact(i)) }
 	funcs["resource_label"] = func(rc core.ResourceChange) string { return core.ResourceDisplayLabel(rc) }
+	funcs["module_type"] = func(mg core.ModuleGroup, r *core.Report) string { return core.ModuleTypeForGroup(mg, r) }
 
 	// Predicate helpers that stringify their args, so users can write
 	// `{{ if impact_is "critical" $rc.Impact }}` without the

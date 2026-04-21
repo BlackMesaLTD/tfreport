@@ -210,8 +210,8 @@ func renderModuleTypeTable(ctx *BlockContext, hideEmpty bool, max int) string {
 	var order []string
 
 	for _, mg := range r.ModuleGroups {
-		topLevel := topLevelModuleName(mg.Path)
-		tname := resolveModuleType(topLevel, r.ModuleSources, mg.Name)
+		topLevel := core.TopLevelModuleName(mg.Path)
+		tname := core.ResolveModuleType(topLevel, r.ModuleSources, mg.Name)
 
 		rr, ok := rowsByType[tname]
 		if !ok {
@@ -395,42 +395,6 @@ func renderSubscriptionTable(ctx *BlockContext, hideEmpty bool, max int) string 
 		fmt.Fprintf(&b, "\n_... %d more subscriptions_\n", total-max)
 	}
 	return strings.TrimRight(b.String(), "\n")
-}
-
-// topLevelModuleName extracts the first module-call name from a module path.
-func topLevelModuleName(path string) string {
-	if path == "" || path == "(root)" {
-		return ""
-	}
-	if !strings.HasPrefix(path, "module.") {
-		return ""
-	}
-	rest := path[len("module."):]
-	bracket := strings.Index(rest, "[")
-	dot := strings.Index(rest, ".")
-	switch {
-	case bracket >= 0 && (dot < 0 || bracket < dot):
-		return rest[:bracket]
-	case dot >= 0:
-		return rest[:dot]
-	default:
-		return rest
-	}
-}
-
-// resolveModuleType resolves a top-level call name to its source's module type.
-func resolveModuleType(topLevel string, sources map[string]string, fallback string) string {
-	if topLevel == "" {
-		return fallback
-	}
-	source, ok := sources[topLevel]
-	if !ok {
-		return topLevel
-	}
-	if mt := core.ExtractModuleType(source); mt != "" {
-		return mt
-	}
-	return topLevel
 }
 
 func init() { defaultRegistry.Register(SummaryTable{}) }

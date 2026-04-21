@@ -107,7 +107,7 @@ func collectInstances(ctx *BlockContext) []*instanceData {
 	insts := map[string]*instanceData{}
 	var order []string
 	for _, mg := range r.ModuleGroups {
-		name := topLevelModuleName(mg.Path)
+		name := core.TopLevelModuleName(mg.Path)
 		if name == "" {
 			name = mg.Name
 		}

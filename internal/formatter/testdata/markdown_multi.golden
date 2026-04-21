@@ -8,6 +8,7 @@
 | sub-b | 12 | ❗ high | 4 create, 6 update, 2 delete |
 
 
+
 ## sub-a
 
 **4 resources**
@@ -15,7 +16,6 @@
 - ✅ New private endpoint: pe-web
 - ❗ Removing route: legacy-route
 - ⚠️ Tags updates across 2 subnets
-
 
 
 ## sub-b
@@ -27,7 +27,6 @@
 - ⚠️ Tags updates across 6 virtual network and subnet and network security group and route table
 - ✅ 2 new private endpoints
 - ❗ Removing 2 routes
-
 
 
 
