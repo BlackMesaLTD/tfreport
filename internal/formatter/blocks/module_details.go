@@ -2,26 +2,92 @@ package blocks
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/BlackMesaLTD/tfreport/internal/core"
 )
 
-// ModuleDetails renders the per-module section used by the markdown target
-// (flat H3 + resource table) and by pr-body/pr-comment (collapsible
-// <details> wrapper around the same content).
+// ModuleDetails renders one section per module group. The section wrapper
+// is target-aware (collapsible <details> on GitHub targets, flat H3 on
+// markdown) and the inner body is chosen by `format`:
+//
+//	format=table (default)  — full resource table (columns configurable)
+//	format=diff             — fenced ```diff code block, one line per resource
+//	format=list             — markdown bullet list, one bullet per resource
 //
 // Args:
 //
-//	per_resource bool (default false) — when true (pr-comment style), emits
-//	    a ```diff block with one line per resource instead of the full
-//	    resource table.
+//	format (table|diff|list; default target-dependent)
+//	    Switches the inner rendering style.
+//	    Default: `diff` for github-pr-comment, else `table`.
+//	    The legacy `per_resource=true` arg is retained as an alias for
+//	    `format=diff` (deprecated; slated for removal one release after
+//	    the arg ships).
+//
+//	columns csv (default "resource,action,changed")
+//	    Table-mode only. Valid IDs: resource, address, action, changed,
+//	    impact, force_new. Unknown IDs return a typed error.
+//
+//	actions csv (default "")
+//	    Filter: keep only resources whose action is in the set. Empty
+//	    means "all actions".
+//
+//	impact csv (default "")
+//	    Filter: keep only resources whose Impact is in the set.
+//
+//	max int (default 0 = unlimited)
+//	    Cap resources per module section. Extra rows truncate with a
+//	    per-format marker.
 type ModuleDetails struct{}
 
 func (ModuleDetails) Name() string { return "module_details" }
 
+// moduleDetailsColumns is the column registry for format=table. Render
+// functions take (ctx, rc, mg) so columns have everything they need.
+var moduleDetailsColumns = []string{"resource", "address", "action", "changed", "impact", "force_new"}
+
+var moduleDetailsHeadings = map[string]string{
+	"resource":  "Resource",
+	"address":   "Address",
+	"action":    "Action",
+	"changed":   "Changed Attributes",
+	"impact":    "Impact",
+	"force_new": "Force-new",
+}
+
 func (ModuleDetails) Render(ctx *BlockContext, args map[string]any) (string, error) {
-	perResource := ArgBool(args, "per_resource", ctx.Target == "github-pr-comment")
+	// `format` supersedes the legacy `per_resource` bool. When
+	// per_resource=true is passed explicitly, treat it as format=diff for
+	// one release (plan decision).
+	format := ArgString(args, "format", "")
+	if format == "" {
+		if ArgBool(args, "per_resource", ctx.Target == "github-pr-comment") {
+			format = "diff"
+		} else {
+			format = "table"
+		}
+	}
+	switch format {
+	case "table", "diff", "list":
+	default:
+		return "", fmt.Errorf("module_details: unknown format %q (valid: table, diff, list)", format)
+	}
+
+	cols := defaultCols(ArgCSV(args, "columns"), []string{"resource", "action", "changed"})
+	if format == "table" {
+		if err := validateColumns("module_details", cols, toSet(moduleDetailsColumns)); err != nil {
+			return "", err
+		}
+	}
+
+	actions := ArgCSV(args, "actions")
+	actionSet := map[core.Action]struct{}{}
+	for _, a := range actions {
+		actionSet[core.Action(a)] = struct{}{}
+	}
+	impactFilter := parseImpactFilterSet(ArgCSV(args, "impact"))
+	max := ArgInt(args, "max", 0)
 
 	r := currentReport(ctx)
 	if r == nil || len(r.ModuleGroups) == 0 {
@@ -32,15 +98,55 @@ func (ModuleDetails) Render(ctx *BlockContext, args map[string]any) (string, err
 	var b strings.Builder
 
 	for _, mg := range r.ModuleGroups {
+		kept := filterModuleChanges(mg.Changes, actionSet, impactFilter)
+		if len(kept) == 0 {
+			continue
+		}
+		totalKept := len(kept)
+		truncated := 0
+		if max > 0 && totalKept > max {
+			truncated = totalKept - max
+			kept = kept[:max]
+		}
+
 		writeModuleHeader(&b, ctx, mg, collapse)
-		if perResource {
-			writeModuleDiffBlock(&b, ctx, mg)
-		} else {
-			writeModuleResourceTable(&b, ctx, mg)
+		switch format {
+		case "table":
+			writeModuleResourceTable(&b, ctx, mg, kept, cols)
+		case "diff":
+			writeModuleDiffBlock(&b, ctx, kept)
+		case "list":
+			writeModuleListBlock(&b, ctx, kept)
+		}
+		if truncated > 0 {
+			fmt.Fprintf(&b, "\n_... %d more resources_\n\n", truncated)
 		}
 		writeModuleFooter(&b, collapse)
 	}
 	return strings.TrimRight(b.String(), "\n"), nil
+}
+
+// filterModuleChanges applies action + impact filters. Empty filters keep
+// everything (so default behavior is unchanged).
+func filterModuleChanges(changes []core.ResourceChange, actions map[core.Action]struct{}, impacts map[core.Impact]struct{}) []core.ResourceChange {
+	if len(actions) == 0 && impacts == nil {
+		return changes
+	}
+	out := make([]core.ResourceChange, 0, len(changes))
+	for _, rc := range changes {
+		if len(actions) > 0 {
+			if _, ok := actions[rc.Action]; !ok {
+				continue
+			}
+		}
+		if impacts != nil {
+			if _, ok := impacts[rc.Impact]; !ok {
+				continue
+			}
+		}
+		out = append(out, rc)
+	}
+	return out
 }
 
 func writeModuleHeader(b *strings.Builder, ctx *BlockContext, mg core.ModuleGroup, collapse bool) {
@@ -68,24 +174,52 @@ func writeModuleFooter(b *strings.Builder, collapse bool) {
 	}
 }
 
-func writeModuleResourceTable(b *strings.Builder, ctx *BlockContext, mg core.ModuleGroup) {
-	b.WriteString("| Resource | Action | Changed Attributes |\n")
-	b.WriteString("|----------|--------|--------------------|\n")
-	for _, rc := range mg.Changes {
-		attrs := formatAttrsInline(rc.ChangedAttributes)
-		if attrs == "" {
-			attrs = "—"
+func writeModuleResourceTable(b *strings.Builder, ctx *BlockContext, mg core.ModuleGroup, changes []core.ResourceChange, cols []string) {
+	headings := mapSlice(cols, func(id string) string { return moduleDetailsHeadings[id] })
+	writeColumnHeader(b, headings)
+	for _, rc := range changes {
+		b.WriteString("|")
+		for _, col := range cols {
+			fmt.Fprintf(b, " %s |", renderModuleDetailsCell(ctx, rc, mg, col))
 		}
-		fmt.Fprintf(b, "| `%s` | %s %s | %s |\n",
-			shortAddress(rc.Address, mg.Path),
-			core.ActionEmoji(rc.Action), rc.Action, attrs)
+		b.WriteString("\n")
 	}
 	b.WriteString("\n")
 }
 
-func writeModuleDiffBlock(b *strings.Builder, ctx *BlockContext, mg core.ModuleGroup) {
+func renderModuleDetailsCell(ctx *BlockContext, rc core.ResourceChange, mg core.ModuleGroup, col string) string {
+	switch col {
+	case "resource":
+		return "`" + shortAddress(rc.Address, mg.Path) + "`"
+	case "address":
+		return "`" + rc.Address + "`"
+	case "action":
+		return fmt.Sprintf("%s %s", core.ActionEmoji(rc.Action), rc.Action)
+	case "changed":
+		attrs := formatAttrsInline(rc.ChangedAttributes)
+		if attrs == "" {
+			return "—"
+		}
+		return attrs
+	case "impact":
+		return formatImpactWithNote(ctx, rc)
+	case "force_new":
+		if ctx.ForceNewResolver == nil {
+			return "—"
+		}
+		for _, a := range rc.ChangedAttributes {
+			if fn, ok := ctx.ForceNewResolver(rc.ResourceType, a.Key); ok && fn {
+				return "✓"
+			}
+		}
+		return "—"
+	}
+	return ""
+}
+
+func writeModuleDiffBlock(b *strings.Builder, ctx *BlockContext, changes []core.ResourceChange) {
 	b.WriteString("```diff\n")
-	for _, rc := range mg.Changes {
+	for _, rc := range changes {
 		symbol := actionDiffSymbol(rc.Action)
 		attrs := ""
 		if len(rc.ChangedAttributes) > 0 {
@@ -97,16 +231,54 @@ func writeModuleDiffBlock(b *strings.Builder, ctx *BlockContext, mg core.ModuleG
 	b.WriteString("```\n\n")
 }
 
-// Doc describes module_details for cmd/docgen. Will be expanded in Phase 3b
-// when module_details gains the `format`, `columns`, and filter args.
+func writeModuleListBlock(b *strings.Builder, ctx *BlockContext, changes []core.ResourceChange) {
+	for _, rc := range changes {
+		emoji := core.ActionEmoji(rc.Action)
+		label := core.ResourceDisplayLabel(rc)
+		attrs := ""
+		if len(rc.ChangedAttributes) > 0 {
+			attrs = fmt.Sprintf(" [%s]", formatAttrsInline(rc.ChangedAttributes))
+		}
+		fmt.Fprintf(b, "- %s `%s`%s\n", emoji, rc.Address, attrs)
+		_ = label // reserved for future "human-readable name" column variant
+	}
+	b.WriteString("\n")
+}
+
+// Doc describes module_details for cmd/docgen.
 func (ModuleDetails) Doc() BlockDoc {
+	cols := make([]ColumnDoc, 0, len(moduleDetailsColumns))
+	for _, id := range moduleDetailsColumns {
+		cols = append(cols, ColumnDoc{
+			ID:          id,
+			Heading:     moduleDetailsHeadings[id],
+			Description: moduleDetailsColumnDescriptions[id],
+		})
+	}
+	sort.Slice(cols, func(i, j int) bool { return cols[i].ID < cols[j].ID })
+
 	return BlockDoc{
 		Name:    "module_details",
-		Summary: "Per-module section: collapsible <details> (GitHub targets) or flat H3 (markdown) wrapping a resource table or per-resource diff block.",
+		Summary: "One section per module group (collapsible <details> on GitHub targets, flat H3 on markdown) wrapping a configurable body: resource table (default), diff block, or bullet list.",
 		Args: []ArgDoc{
-			{Name: "per_resource", Type: "bool", Default: "true for github-pr-comment, else false", Description: "When true, emits a ```diff code block with one line per resource instead of a resource table."},
+			{Name: "format", Type: "string", Default: "(diff for pr-comment, else table)", Description: "One of `table`, `diff`, `list`."},
+			{Name: "per_resource", Type: "bool", Default: "(legacy)", Description: "Deprecated alias: `true` maps to `format=diff`. Remove once callers migrate."},
+			{Name: "columns", Type: "csv", Default: "resource,action,changed", Description: "Table-mode columns. Ignored for format=diff/list."},
+			{Name: "actions", Type: "csv", Default: "(all)", Description: "Filter: keep only resources whose action is in the set."},
+			{Name: "impact", Type: "csv", Default: "(all)", Description: "Filter: keep only resources whose Impact is in the set."},
+			{Name: "max", Type: "int", Default: "0 (no limit)", Description: "Cap resources per module section; extras collapse into `… N more resources`."},
 		},
+		Columns: cols,
 	}
+}
+
+var moduleDetailsColumnDescriptions = map[string]string{
+	"resource":  "Address relative to the module (module-prefix stripped), backticked.",
+	"address":   "Full terraform address, backticked.",
+	"action":    "Action emoji + action name.",
+	"changed":   "Changed attribute keys + optional descriptions, comma-joined.",
+	"impact":    "Impact emoji + level + optional note.",
+	"force_new": "`✓` when any changed attribute is preset-marked force_new; `—` otherwise.",
 }
 
 func init() { defaultRegistry.Register(ModuleDetails{}) }

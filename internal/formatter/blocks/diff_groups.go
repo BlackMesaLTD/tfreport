@@ -42,9 +42,21 @@ type DiffGroups struct{}
 
 func (DiffGroups) Name() string { return "diff_groups" }
 
+var diffGroupsColumns = []string{"pattern", "count", "sample"}
+var diffGroupsHeadings = map[string]string{
+	"pattern": "Pattern",
+	"count":   "Count",
+	"sample":  "Sample",
+}
+
 func (DiffGroups) Render(ctx *BlockContext, args map[string]any) (string, error) {
 	if len(ctx.Reports) > 1 {
 		return "", fmt.Errorf("diff_groups: multi-report mode not supported — wrap in {{ range .Reports }}…{{ end }} for per-report dedup, or use fleet_homogeneity for cross-report uniformity")
+	}
+
+	cols := defaultCols(ArgCSV(args, "columns"), diffGroupsColumns)
+	if err := validateColumns("diff_groups", cols, toSet(diffGroupsColumns)); err != nil {
+		return "", err
 	}
 
 	threshold := ArgInt(args, "threshold", 2)
@@ -58,13 +70,7 @@ func (DiffGroups) Render(ctx *BlockContext, args map[string]any) (string, error)
 		return "", nil
 	}
 
-	type bucket struct {
-		fingerprint string
-		action      core.Action
-		attrKeys    []string
-		resources   []core.ResourceChange
-	}
-	buckets := map[string]*bucket{}
+	buckets := map[string]*diffBucket{}
 	var order []string
 
 	for _, mg := range r.ModuleGroups {
@@ -75,7 +81,7 @@ func (DiffGroups) Render(ctx *BlockContext, args map[string]any) (string, error)
 			fp := fingerprint(rc)
 			b, ok := buckets[fp]
 			if !ok {
-				b = &bucket{
+				b = &diffBucket{
 					fingerprint: fp,
 					action:      rc.Action,
 					attrKeys:    core.ChangedAttributeKeys(rc.ChangedAttributes),
@@ -88,7 +94,7 @@ func (DiffGroups) Render(ctx *BlockContext, args map[string]any) (string, error)
 	}
 
 	// Split into collapsed and individual rows by threshold.
-	var collapsed, individual []*bucket
+	var collapsed, individual []*diffBucket
 	for _, fp := range order {
 		b := buckets[fp]
 		if len(b.resources) >= threshold {
@@ -113,13 +119,14 @@ func (DiffGroups) Render(ctx *BlockContext, args map[string]any) (string, error)
 	var out strings.Builder
 	if len(collapsed) > 0 {
 		out.WriteString("**Deduplicated changes:**\n\n")
-		out.WriteString("| Pattern | Count | Sample |\n")
-		out.WriteString("|---------|-------|--------|\n")
+		headings := mapSlice(cols, func(id string) string { return diffGroupsHeadings[id] })
+		writeColumnHeader(&out, headings)
 		for _, b := range collapsed {
-			pattern := fmt.Sprintf("%s %s [%s]",
-				core.ActionEmoji(b.action), b.action, strings.Join(b.attrKeys, ", "))
-			sample := b.resources[0].Address
-			fmt.Fprintf(&out, "| %s | %d | `%s` |\n", pattern, len(b.resources), sample)
+			out.WriteString("|")
+			for _, col := range cols {
+				fmt.Fprintf(&out, " %s |", renderDiffGroupCell(b, col))
+			}
+			out.WriteString("\n")
 		}
 		out.WriteString("\n")
 	}
@@ -142,6 +149,28 @@ func (DiffGroups) Render(ctx *BlockContext, args map[string]any) (string, error)
 	}
 
 	return strings.TrimRight(out.String(), "\n"), nil
+}
+
+// diffBucket groups resources sharing a fingerprint.
+type diffBucket struct {
+	fingerprint string
+	action      core.Action
+	attrKeys    []string
+	resources   []core.ResourceChange
+}
+
+// renderDiffGroupCell renders one column cell for a bucket.
+func renderDiffGroupCell(b *diffBucket, col string) string {
+	switch col {
+	case "pattern":
+		return fmt.Sprintf("%s %s [%s]",
+			core.ActionEmoji(b.action), b.action, strings.Join(b.attrKeys, ", "))
+	case "count":
+		return fmt.Sprintf("%d", len(b.resources))
+	case "sample":
+		return "`" + b.resources[0].Address + "`"
+	}
+	return ""
 }
 
 // fingerprint returns a stable hash of a resource change's semantics.
@@ -202,8 +231,14 @@ func (DiffGroups) Doc() BlockDoc {
 		Name:    "diff_groups",
 		Summary: "Collapses resources with identical change fingerprints into grouped rows. Single-report only; use fleet_homogeneity for cross-report uniformity.",
 		Args: []ArgDoc{
+			{Name: "columns", Type: "csv", Default: "pattern,count,sample", Description: "Column subset for the collapsed-changes table."},
 			{Name: "threshold", Type: "int", Default: "2", Description: "Only collapse when group size ≥ threshold."},
 			{Name: "actions", Type: "csv", Default: "update,delete,replace", Description: "Which actions participate in fingerprint grouping."},
+		},
+		Columns: []ColumnDoc{
+			{ID: "pattern", Heading: "Pattern", Description: "Action emoji + action + bracketed attribute-key list."},
+			{ID: "count", Heading: "Count", Description: "Number of resources sharing this fingerprint."},
+			{ID: "sample", Heading: "Sample", Description: "One representative address, backticked."},
 		},
 	}
 }

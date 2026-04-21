@@ -17,6 +17,7 @@ import (
 	"bytes"
 	"fmt"
 	"reflect"
+	"strings"
 	"text/template"
 
 	sprig "github.com/Masterminds/sprig/v3"
@@ -124,6 +125,10 @@ func (e *Engine) buildFuncMap(ctx *blocks.BlockContext) template.FuncMap {
 	funcs["fleet_homogeneity"] = blockFunc("fleet_homogeneity")
 	funcs["glossary"] = blockFunc("glossary")
 	funcs["per_report"] = blockFunc("per_report")
+	funcs["imports_list"] = blockFunc("imports_list")
+	funcs["banner"] = blockFunc("banner")
+	funcs["attribute_diff"] = blockFunc("attribute_diff")
+	funcs["submodule_group"] = blockFunc("submodule_group")
 
 	// Sandboxed include. Falls back to an error if no include func was bound.
 	if e.include != nil {
@@ -173,7 +178,175 @@ func (e *Engine) buildFuncMap(ctx *blocks.BlockContext) template.FuncMap {
 		return total
 	}
 
+	// count_where / resources — predicate-based filtering helpers.
+	// Multi-predicate AND semantics; csv values on `impact`, `action` are OR.
+	// Predicates: action, impact, module, module_type, resource_type, is_import.
+	funcs["count_where"] = func(args ...any) (int, error) {
+		preds, err := parseWherePredicates(args)
+		if err != nil {
+			return 0, err
+		}
+		count := 0
+		for _, r := range reportsForCtx(ctx) {
+			for _, mg := range r.ModuleGroups {
+				for _, rc := range mg.Changes {
+					if whereMatch(r, mg, rc, preds) {
+						count++
+					}
+				}
+			}
+		}
+		return count, nil
+	}
+	funcs["resources"] = func(args ...any) ([]core.ResourceChange, error) {
+		preds, err := parseWherePredicates(args)
+		if err != nil {
+			return nil, err
+		}
+		var out []core.ResourceChange
+		for _, r := range reportsForCtx(ctx) {
+			for _, mg := range r.ModuleGroups {
+				for _, rc := range mg.Changes {
+					if whereMatch(r, mg, rc, preds) {
+						out = append(out, rc)
+					}
+				}
+			}
+		}
+		return out, nil
+	}
+
 	return funcs
+}
+
+// wherePredicates is the parsed form of count_where/resources args.
+type wherePredicates struct {
+	actions       map[core.Action]struct{}
+	impacts       map[core.Impact]struct{}
+	modules       map[string]struct{}
+	moduleTypes   map[string]struct{}
+	resourceTypes map[string]struct{}
+	isImport      *bool
+}
+
+// parseWherePredicates converts positional k,v args into a predicate set.
+// Keys must be strings; values are csv-split where appropriate (action,
+// impact, module, module_type, resource_type) or parsed as bool for
+// is_import. Returns an error on odd argument counts, non-string keys, or
+// unknown predicate names.
+func parseWherePredicates(args []any) (wherePredicates, error) {
+	var p wherePredicates
+	if len(args)%2 != 0 {
+		return p, fmt.Errorf("count_where/resources: expected key=value pairs, got %d arguments", len(args))
+	}
+	for i := 0; i < len(args); i += 2 {
+		key, ok := args[i].(string)
+		if !ok {
+			return p, fmt.Errorf("count_where/resources: argument %d: key must be a string, got %T", i, args[i])
+		}
+		val := fmt.Sprint(args[i+1])
+		switch key {
+		case "action":
+			if p.actions == nil {
+				p.actions = map[core.Action]struct{}{}
+			}
+			for _, v := range splitCSV(val) {
+				p.actions[core.Action(v)] = struct{}{}
+			}
+		case "impact":
+			if p.impacts == nil {
+				p.impacts = map[core.Impact]struct{}{}
+			}
+			for _, v := range splitCSV(val) {
+				p.impacts[core.Impact(v)] = struct{}{}
+			}
+		case "module":
+			if p.modules == nil {
+				p.modules = map[string]struct{}{}
+			}
+			for _, v := range splitCSV(val) {
+				p.modules[strings.ToLower(v)] = struct{}{}
+			}
+		case "module_type":
+			if p.moduleTypes == nil {
+				p.moduleTypes = map[string]struct{}{}
+			}
+			for _, v := range splitCSV(val) {
+				p.moduleTypes[strings.ToLower(v)] = struct{}{}
+			}
+		case "resource_type":
+			if p.resourceTypes == nil {
+				p.resourceTypes = map[string]struct{}{}
+			}
+			for _, v := range splitCSV(val) {
+				p.resourceTypes[v] = struct{}{}
+			}
+		case "is_import":
+			switch strings.ToLower(val) {
+			case "true":
+				b := true
+				p.isImport = &b
+			case "false":
+				b := false
+				p.isImport = &b
+			default:
+				return p, fmt.Errorf("count_where/resources: is_import must be true or false, got %q", val)
+			}
+		default:
+			return p, fmt.Errorf("count_where/resources: unknown predicate %q (valid: action, impact, module, module_type, resource_type, is_import)", key)
+		}
+	}
+	return p, nil
+}
+
+func splitCSV(s string) []string {
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		trimmed := strings.TrimSpace(p)
+		if trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
+}
+
+// whereMatch reports whether rc (inside mg of r) satisfies every predicate.
+func whereMatch(r *core.Report, mg core.ModuleGroup, rc core.ResourceChange, p wherePredicates) bool {
+	if p.actions != nil {
+		if _, ok := p.actions[rc.Action]; !ok {
+			return false
+		}
+	}
+	if p.impacts != nil {
+		if _, ok := p.impacts[rc.Impact]; !ok {
+			return false
+		}
+	}
+	if p.modules != nil {
+		top := core.TopLevelModuleName(mg.Path)
+		if _, ok := p.modules[strings.ToLower(top)]; !ok {
+			if _, nameOk := p.modules[strings.ToLower(mg.Name)]; !nameOk {
+				return false
+			}
+		}
+	}
+	if p.moduleTypes != nil {
+		top := core.TopLevelModuleName(mg.Path)
+		mt := core.ResolveModuleType(top, r.ModuleSources, mg.Name)
+		if _, ok := p.moduleTypes[strings.ToLower(mt)]; !ok {
+			return false
+		}
+	}
+	if p.resourceTypes != nil {
+		if _, ok := p.resourceTypes[rc.ResourceType]; !ok {
+			return false
+		}
+	}
+	if p.isImport != nil && rc.IsImport != *p.isImport {
+		return false
+	}
+	return true
 }
 
 // sampleFn returns the first n elements of a slice (any element type).

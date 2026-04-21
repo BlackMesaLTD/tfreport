@@ -207,6 +207,17 @@ shipped; P3 rows remain explicitly deferred.
 | `sample` template helper | `{{ sample 5 .Slice }}` | Reflection-based, works with any `[]T`. |
 | `impact_is` / `action_is` predicates | `{{ if impact_is "critical" .MaxImpact }}…{{ end }}` | Stringifies both args; avoids the `(printf "%s" …)` wart. |
 | `glossary` block | `{{ glossary }}` | Opt-in only; never in defaults. Args: `include` csv (`actions`, `impacts`, `imports`), `level` (`beginner`, `intermediate`). |
+| `modules_table` block with `columns` csv | `{{ modules_table "report" $r "columns" "module_type,module,changed_attrs" }}` | The prototype for pluggable-column tables. 8 supported column IDs; per-column render funcs isolated via moduleColumns map. |
+| `per_report` block (GAP-A) | `{{ per_report "report" $r "show" "key_changes" }}` | Declarative replacement for hand-rolled `{{ range .Reports }}<details>…{{ end }}` loops in *.multi.tmpl. Target-aware grammar (markdown H2 vs. GitHub `<details>`). Retired the biggest freestyle-markdown surface in tfreport. |
+| `columns` csv + typed-error validation on 5 tables (GAP-B/C/D/H) | `summary_table`, `changed_resources_table`, `module_details`, `diff_groups`, `deploy_checklist`, `risk_histogram` all accept `columns` csv. | Shared validation scaffolding in `blocks/columns.go`. Defaults preserve pre-refactor output; unknown IDs return `unknown column "X" (valid: …)`. |
+| Multi-axis filters on `changed_resources_table` (GAP-C) | `impact`, `modules`, `module_types`, `resource_types`, `is_import` csv filters. | Combined with existing `actions` + `max`. Case-insensitive matching on module filters. |
+| `module_details` `format` + filters (GAP-D) | `format=table\|diff\|list`; `actions`, `impact`, `max` filters. | `per_resource=true` kept as deprecated alias for `format=diff` for one release. |
+| `imports_list` block (GAP-F) | `{{ imports_list format="table" columns="address,module" }}` | Retires the `{{ range $mg := .Report.ModuleGroups }}{{ range $rc }}{{ if $rc.IsImport }}…{{ end }}{{ end }}{{ end }}` hand-roll in the bulk-import recipe. |
+| `banner` block (GAP-G) | `{{ banner if_impact="critical,high" style="alert" text="…" }}` | OR semantics across triggers (`if_impact` csv, `if_action_gt="delete:0,replace:0"`). No-triggers = always on. Returns empty when no match \u2014 safe to include unconditionally. |
+| `attribute_diff` block (GAP-I) | `{{ attribute_diff addresses="…" format="list" }}` | Per-attribute key/old/new rendering in table, list, or inline form. Handles computed (`(known after apply)`) and truncation. |
+| `submodule_group` block (GAP-E) | `{{ submodule_group instance="vnet" depth=2 format="diff" }}` | Extracted from instance_detail's internal `writeSubmoduleGrouped`. Standalone for recipes that want nested sub-module dropdowns without the whole instance_detail wrapper. |
+| `count_where` / `resources` helpers (GAP-J) | `{{ count_where "module" "vnet" "impact" "high,medium" }}`; `{{ range resources "action" "delete" }}…{{ end }}` | Predicate-based counting + filtered iteration. Multi-predicate AND; csv values on action/impact/module* use OR. Generalization of `action_count` / `import_count`. |
+| `Block.Doc()` interface + `cmd/docgen` | `make docs` regenerates `docs/blocks.md` from registry. | Structured metadata per block (args, columns, examples). CI auto-commits regenerated docs on PR via `.github/workflows/docs.yml`. Drift-proof reference. |
 
 ### Explicitly deferred
 

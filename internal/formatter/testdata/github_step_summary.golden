@@ -18,7 +18,7 @@ Plan: 1 to add, 2 to change, 1 to destroy.
 **Changed resources:**
 
 | Resource | Name | Changed | Impact |
-|----------|------|---------|--------|
+|---|---|---|---|
 | route | legacy-route | `address_prefix`, `name`, `next_hop_type` | 🔴 high |
 
 ```diff
@@ -32,7 +32,7 @@ Plan: 1 to add, 2 to change, 1 to destroy.
 **Changed resources:**
 
 | Resource | Name | Changed | Impact |
-|----------|------|---------|--------|
+|---|---|---|---|
 | subnet | app-subnet | `tags` | 🟡 medium |
 | subnet | db-subnet | `tags` | 🟡 medium |
 
