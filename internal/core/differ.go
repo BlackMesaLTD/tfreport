@@ -7,25 +7,42 @@ import (
 )
 
 // Diff compares before and after maps for a resource change and returns
-// the list of changed attributes. It also marks attributes as computed
-// if they appear in afterUnknown.
-func Diff(before, after, afterUnknown map[string]any) []ChangedAttribute {
+// the list of changed attributes. Marks attributes as Computed if they
+// appear in afterUnknown, and as Sensitive if either sensitivity mask
+// flags them. When Sensitive=true, OldValue/NewValue are replaced with
+// the SensitiveMask sentinel before return — belt-and-braces, so even
+// downstream code that forgets to check .Sensitive sees a safe value.
+//
+// beforeSensitive / afterSensitive come from terraform's plan JSON
+// before_sensitive / after_sensitive fields. Either may be nil (empty
+// mask = nothing sensitive).
+func Diff(before, after, afterUnknown map[string]any, beforeSensitive, afterSensitive any) []ChangedAttribute {
 	if before == nil && after == nil {
 		return nil
 	}
 
-	// Create: everything in after is new
-	if before == nil {
-		return diffCreate(after, afterUnknown)
+	var attrs []ChangedAttribute
+	switch {
+	case before == nil:
+		attrs = diffCreate(after, afterUnknown)
+	case after == nil:
+		attrs = diffDelete(before)
+	default:
+		attrs = diffUpdate(before, after, afterUnknown)
 	}
 
-	// Delete: everything in before is removed
-	if after == nil {
-		return diffDelete(before)
+	// Mask sensitive values. Checked per-key against both masks — either
+	// side flagging the key (e.g. rotating a password that WAS sensitive)
+	// is enough to mark the attribute Sensitive.
+	for i, a := range attrs {
+		path := []string{a.Key}
+		if isSensitive(afterSensitive, path) || isSensitive(beforeSensitive, path) {
+			attrs[i].Sensitive = true
+			attrs[i].OldValue = SensitiveMask
+			attrs[i].NewValue = SensitiveMask
+		}
 	}
-
-	// Update: compare before vs after
-	return diffUpdate(before, after, afterUnknown)
+	return attrs
 }
 
 func diffCreate(after, afterUnknown map[string]any) []ChangedAttribute {

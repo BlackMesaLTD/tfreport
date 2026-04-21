@@ -1,0 +1,27 @@
+{
+  "label": "legacy-sub",
+  "module_groups": [
+    {
+      "name": "root",
+      "path": "",
+      "action_counts": {"create": 1},
+      "changes": [
+        {
+          "address": "azurerm_subnet.legacy",
+          "module_path": "",
+          "resource_type": "azurerm_subnet",
+          "resource_name": "legacy",
+          "action": "create",
+          "impact": "low",
+          "changed_attributes": [
+            {"key": "name"},
+            {"key": "location"}
+          ]
+        }
+      ]
+    }
+  ],
+  "total_resources": 1,
+  "action_counts": {"create": 1},
+  "max_impact": "low"
+}

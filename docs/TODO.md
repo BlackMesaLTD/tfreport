@@ -75,17 +75,6 @@ Five formatters are implemented, all targeting GitHub. GitLab MR comments and At
 - `atlantis` formatter matching Atlantis output conventions
 - Register in `formatter.Get()` dispatcher
 
-## Sensitive Value Handling
-
-**Status:** `BeforeSensitive` and `AfterSensitive` are parsed but not used.
-
-The parser extracts sensitivity markers from plan JSON, but the differ and formatters don't mask or annotate sensitive values.
-
-**What's needed:**
-- Check sensitivity in `Diff()` — mark `ChangedAttribute.Sensitive` field
-- Formatters should show `(sensitive)` instead of actual values
-- Prevent accidental secret exposure in PR comments
-
 ## GitHub Action — presetgen
 
 **Status:** The composite action only ships `tfreport`, not `presetgen`.

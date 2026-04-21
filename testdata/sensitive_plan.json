@@ -1,0 +1,106 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.9.0",
+  "planned_values": {},
+  "resource_changes": [
+    {
+      "address": "mock_secret_holder.password_store",
+      "module_address": "",
+      "type": "mock_secret_holder",
+      "name": "password_store",
+      "provider_name": "registry.terraform.io/mock/mock",
+      "change": {
+        "actions": ["update"],
+        "before": {
+          "id": "store-1",
+          "name": "password-store",
+          "password": "LEAK_CANARY_OLD",
+          "location": "uksouth"
+        },
+        "after": {
+          "id": "store-1",
+          "name": "password-store",
+          "password": "LEAK_CANARY_NEW",
+          "location": "ukwest"
+        },
+        "after_unknown": {},
+        "before_sensitive": {"password": true},
+        "after_sensitive":  {"password": true}
+      }
+    },
+
+    {
+      "address": "mock_tagged.nested_secret",
+      "module_address": "",
+      "type": "mock_tagged",
+      "name": "nested_secret",
+      "provider_name": "registry.terraform.io/mock/mock",
+      "change": {
+        "actions": ["update"],
+        "before": {
+          "id": "tagged-1",
+          "tags": {
+            "env": "prod",
+            "secret_key": "LEAK_CANARY_NESTED_OLD"
+          }
+        },
+        "after": {
+          "id": "tagged-1",
+          "tags": {
+            "env": "prod",
+            "secret_key": "LEAK_CANARY_NESTED_NEW"
+          }
+        },
+        "after_unknown": {},
+        "before_sensitive": {"tags": {"secret_key": true}},
+        "after_sensitive":  {"tags": {"secret_key": true}}
+      }
+    },
+
+    {
+      "address": "mock_listy.connection_strings",
+      "module_address": "",
+      "type": "mock_listy",
+      "name": "connection_strings",
+      "provider_name": "registry.terraform.io/mock/mock",
+      "change": {
+        "actions": ["update"],
+        "before": {
+          "id": "listy-1",
+          "conns": ["public-old", "LEAK_CANARY_LIST_OLD", "also-public-old"]
+        },
+        "after": {
+          "id": "listy-1",
+          "conns": ["public-new", "LEAK_CANARY_LIST_NEW", "also-public-new"]
+        },
+        "after_unknown": {},
+        "before_sensitive": {"conns": [false, true, false]},
+        "after_sensitive":  {"conns": [false, true, false]}
+      }
+    },
+
+    {
+      "address": "mock_plain.normal",
+      "module_address": "",
+      "type": "mock_plain",
+      "name": "normal",
+      "provider_name": "registry.terraform.io/mock/mock",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {
+          "name": "normal-one",
+          "location": "uksouth"
+        },
+        "after_unknown": {"id": true, "computed_field": true},
+        "before_sensitive": {},
+        "after_sensitive":  {}
+      }
+    }
+  ],
+  "configuration": {
+    "root_module": {
+      "module_calls": {}
+    }
+  }
+}

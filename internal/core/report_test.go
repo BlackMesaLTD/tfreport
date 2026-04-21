@@ -3,6 +3,7 @@ package core
 import (
 	"encoding/json"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -291,6 +292,139 @@ func TestCustomBackwardCompat(t *testing.T) {
 	}
 	if restored.Custom != nil && len(restored.Custom) != 0 {
 		t.Errorf("restored Custom should be nil/empty, got %v", restored.Custom)
+	}
+}
+
+// --- Layer 1: Sensitive round-trip + backward-compat ---
+
+func TestSensitiveRoundTrip(t *testing.T) {
+	// Build a report with one Sensitive attribute via the full pipeline so
+	// we exercise both Diff masking AND JSON serialization.
+	data, err := os.ReadFile("../../testdata/sensitive_plan.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := GenerateReport(data, ReportOptions{ChangedOnly: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Find the password attribute — must be Sensitive and value-masked.
+	var found bool
+	for _, mg := range report.ModuleGroups {
+		for _, rc := range mg.Changes {
+			for _, a := range rc.ChangedAttributes {
+				if rc.Address == "mock_secret_holder.password_store" && a.Key == "password" {
+					found = true
+					if !a.Sensitive {
+						t.Error("password attr should be Sensitive post-Diff")
+					}
+					if a.OldValue != SensitiveMask || a.NewValue != SensitiveMask {
+						t.Errorf("password values should be masked: old=%v new=%v", a.OldValue, a.NewValue)
+					}
+				}
+			}
+		}
+	}
+	if !found {
+		t.Fatal("password attribute not found in fixture report")
+	}
+
+	// Round-trip: marshal and unmarshal.
+	marshaled, err := MarshalReport(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The canary must not be in the JSON — nowhere.
+	for _, canary := range []string{"LEAK_CANARY_OLD", "LEAK_CANARY_NEW", "LEAK_CANARY_NESTED_OLD", "LEAK_CANARY_NESTED_NEW", "LEAK_CANARY_LIST_OLD", "LEAK_CANARY_LIST_NEW"} {
+		if strings.Contains(string(marshaled), canary) {
+			t.Errorf("canary %q leaked into JSON output", canary)
+		}
+	}
+
+	// The "sensitive": true flag must be in the JSON for the password attr.
+	if !strings.Contains(string(marshaled), `"sensitive": true`) {
+		t.Error("JSON should contain 'sensitive: true' for at least one attribute")
+	}
+
+	// Unmarshal — Sensitive flag survives.
+	restored, err := UnmarshalReport(marshaled)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var restoredSensitive bool
+	for _, mg := range restored.ModuleGroups {
+		for _, rc := range mg.Changes {
+			if rc.Address == "mock_secret_holder.password_store" {
+				for _, a := range rc.ChangedAttributes {
+					if a.Key == "password" && a.Sensitive {
+						restoredSensitive = true
+					}
+				}
+			}
+		}
+	}
+	if !restoredSensitive {
+		t.Error("restored report should have password.Sensitive=true")
+	}
+}
+
+func TestSensitiveOmittedFromJSONWhenFalse(t *testing.T) {
+	// Sensitive=false uses omitempty, so the key should be absent from JSON
+	// for non-sensitive attributes (keeps the JSON tight).
+	report := &Report{
+		TotalResources: 1,
+		ActionCounts:   map[Action]int{ActionCreate: 1},
+		MaxImpact:      ImpactLow,
+		ModuleGroups: []ModuleGroup{
+			{
+				Name:         "m",
+				Path:         "module.m",
+				ActionCounts: map[Action]int{ActionCreate: 1},
+				Changes: []ResourceChange{
+					{
+						Address:           "a",
+						Action:            ActionCreate,
+						Impact:            ImpactLow,
+						ChangedAttributes: []ChangedAttribute{{Key: "name", Sensitive: false}},
+					},
+				},
+			},
+		},
+	}
+
+	marshaled, err := MarshalReport(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(marshaled), `"sensitive":`) {
+		t.Errorf("JSON should omit 'sensitive' key when false, got:\n%s", string(marshaled))
+	}
+}
+
+func TestLegacyReportBackwardCompat(t *testing.T) {
+	// Load a legacy report JSON (no 'sensitive' / 'preserved' fields) and
+	// confirm it parses cleanly — Sensitive defaults to false, Custom nil,
+	// no errors.
+	data, err := os.ReadFile("../../testdata/old_report.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, err := UnmarshalReport(data)
+	if err != nil {
+		t.Fatalf("legacy report parse failed: %v", err)
+	}
+	if restored.Label != "legacy-sub" {
+		t.Errorf("label lost on legacy parse: %q", restored.Label)
+	}
+	if len(restored.ModuleGroups) != 1 {
+		t.Fatalf("expected 1 module group, got %d", len(restored.ModuleGroups))
+	}
+	for _, a := range restored.ModuleGroups[0].Changes[0].ChangedAttributes {
+		if a.Sensitive {
+			t.Errorf("legacy attr should default Sensitive=false, got true for key %q", a.Key)
+		}
 	}
 }
 

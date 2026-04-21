@@ -47,8 +47,15 @@ type ChangedAttribute struct {
 	OldValue    any
 	NewValue    any
 	Computed    bool   // true if value comes from after_unknown
+	Sensitive   bool   // true when terraform marked this attr sensitive in before/after sensitivity masks
 	Description string // from preset or config
 }
+
+// SensitiveMask is the sentinel string used for OldValue/NewValue when the
+// attribute is marked sensitive. Belt-and-braces: even if a downstream caller
+// forgets to check .Sensitive, the raw value is already replaced with this
+// string before the ChangedAttribute is returned by Diff().
+const SensitiveMask = "(sensitive)"
 
 // ResourceChange represents a single resource change parsed from plan JSON.
 type ResourceChange struct {
