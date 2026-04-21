@@ -301,6 +301,13 @@ One 'report card' section for a single report. Declarative replacement for the {
 
 Terraform-style verb summary (`Plan: 1 to add, 2 to change, 1 to destroy.`). Target-agnostic. Empty plan renders `No changes detected.`
 
+**Args:**
+
+| Name | Type | Default | Description |
+|------|------|---------|-------------|
+| `report` | `*core.Report` | (current report) | Explicit report to count. Required when iterating `range .Reports` in multi-report mode; pass `$r`. |
+| `include_imports` | `bool` | false | Append `, N imported` when the report has any IsImport=true resources. |
+
 
 ### `risk_histogram`
 

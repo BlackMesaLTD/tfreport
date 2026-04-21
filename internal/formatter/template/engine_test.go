@@ -170,6 +170,69 @@ func TestEngine_resources_filteredIteration(t *testing.T) {
 	}
 }
 
+// TestEngine_worstImpact confirms the worst_impact helper works on arbitrary
+// ModuleGroup values — needed for `range $mg := $r.ModuleGroups` templates.
+func TestEngine_worstImpact(t *testing.T) {
+	mg := core.ModuleGroup{
+		Changes: []core.ResourceChange{
+			{Impact: core.ImpactLow},
+			{Impact: core.ImpactHigh},
+			{Impact: core.ImpactMedium},
+		},
+	}
+	engine := New(blocks.Default())
+	out, err := engine.Render(
+		`{{ worst_impact .Mg }}`,
+		&blocks.BlockContext{Target: "markdown", Report: &core.Report{}},
+	)
+	_ = mg
+	_ = out
+	_ = err
+	// Can't easily inject a plain ModuleGroup via .Mg — use raw-data path via .Report.
+	out, err = engine.Render(
+		`{{ range $mg := .Report.ModuleGroups }}{{ worst_impact $mg }}{{ end }}`,
+		&blocks.BlockContext{Target: "markdown", Report: &core.Report{
+			ModuleGroups: []core.ModuleGroup{mg},
+		}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out) != "high" {
+		t.Errorf("want 'high', got %q", out)
+	}
+}
+
+func TestEngine_worstAction(t *testing.T) {
+	engine := New(blocks.Default())
+	cases := []struct {
+		name   string
+		counts map[core.Action]int
+		want   string
+	}{
+		{"empty", map[core.Action]int{}, ""},
+		{"only create", map[core.Action]int{core.ActionCreate: 3}, "create"},
+		{"create+update", map[core.Action]int{core.ActionCreate: 1, core.ActionUpdate: 2}, "update"},
+		{"update+delete", map[core.Action]int{core.ActionUpdate: 2, core.ActionDelete: 1}, "delete"},
+		{"replace wins", map[core.Action]int{core.ActionReplace: 1, core.ActionDelete: 2, core.ActionUpdate: 3}, "replace"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			r := &core.Report{ActionCounts: c.counts}
+			out, err := engine.Render(
+				`{{ worst_action .Report.ActionCounts }}`,
+				&blocks.BlockContext{Target: "markdown", Report: r},
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.TrimSpace(out) != c.want {
+				t.Errorf("want %q, got %q", c.want, out)
+			}
+		})
+	}
+}
+
 func TestEngine_parameterizedBlock(t *testing.T) {
 	r := loadReport(t)
 	engine := New(blocks.Default())
