@@ -1,14 +1,18 @@
 #!/usr/bin/env bash
-# parse-custom-input.sh — translates the YAML-block `custom:` input used
-# by the prepare / action / report-plan composites into repeated
-# `--custom key=value` tfreport CLI flags, printed one per line.
+# parse-custom-input.sh — translates user-supplied `custom:` YAML-block input
+# into repeated `--custom key=value` tfreport CLI flags, AND auto-prepends a
+# standard set of GitHub-Actions context fields when the usual GHA env vars
+# are available. User values take precedence over auto-injected ones (the
+# Go CLI's --custom parser resolves repeated keys last-wins).
 #
-# Input (env var):
-#   TFREPORT_INPUT_CUSTOM — the raw multi-line YAML-block value.
+# Input (env vars):
+#   TFREPORT_INPUT_CUSTOM  — raw multi-line YAML-block value (optional).
+#   GITHUB_*               — GHA runner-injected context (optional; present
+#                            whenever this script runs inside a GHA step).
 #
-# Output (stdout): one `--custom\nkey=value` pair per input line, tab-
-# separated for easy readarray consumption. Emits nothing when the input
-# is empty. Non-zero exit on malformed lines.
+# Output (stdout): one `--custom\nkey=value` pair per resolved entry, tab-
+# separated for easy mapfile consumption. Emits nothing when nothing is set.
+# Non-zero exit on malformed user input.
 #
 # Caller pattern (bash array build):
 #   mapfile -t CUSTOM_ARGS < <(TFREPORT_INPUT_CUSTOM="$INPUT_CUSTOM" \
@@ -16,19 +20,62 @@
 #   tfreport ... "${CUSTOM_ARGS[@]}"
 #
 # Semantics:
-#   - One `key: value` per line
-#   - First `:` splits; values may contain further colons
-#   - Leading/trailing whitespace trimmed from key AND value
-#   - Lines starting with `#` are comments (skipped)
-#   - Blank lines skipped
-#   - Values are LITERAL STRINGS — no quotes stripped, no YAML escapes
+#   - Auto-injected keys (when $GITHUB_RUN_ID is set):
+#       workflow_url   Composed URL to the current workflow run.
+#       run_id         $GITHUB_RUN_ID
+#       run_number     $GITHUB_RUN_NUMBER
+#       run_attempt    $GITHUB_RUN_ATTEMPT
+#       sha            $GITHUB_SHA
+#       ref_name       $GITHUB_REF_NAME (branch/tag name)
+#       actor          $GITHUB_ACTOR
+#       workflow       $GITHUB_WORKFLOW
+#       event_name     $GITHUB_EVENT_NAME
+#       repository     $GITHUB_REPOSITORY
+#       server_url     $GITHUB_SERVER_URL
+#   - User input parsing:
+#     - One `key: value` per line
+#     - First `:` splits; values may contain further colons
+#     - Leading/trailing whitespace trimmed from key AND value
+#     - Lines starting with `#` are comments (skipped)
+#     - Blank lines skipped
+#     - Values are LITERAL STRINGS — no quotes stripped, no YAML escapes
 set -euo pipefail
 
-INPUT="${TFREPORT_INPUT_CUSTOM:-}"
-if [ -z "$INPUT" ]; then
+# --- auto-inject GHA context fields ---
+AUTO=""
+if [ -n "${GITHUB_RUN_ID:-}" ]; then
+  AUTO=$(cat <<EOF
+workflow_url: ${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY:-}/actions/runs/${GITHUB_RUN_ID}
+run_id: ${GITHUB_RUN_ID}
+run_number: ${GITHUB_RUN_NUMBER:-}
+run_attempt: ${GITHUB_RUN_ATTEMPT:-1}
+sha: ${GITHUB_SHA:-}
+ref_name: ${GITHUB_REF_NAME:-}
+actor: ${GITHUB_ACTOR:-}
+workflow: ${GITHUB_WORKFLOW:-}
+event_name: ${GITHUB_EVENT_NAME:-}
+repository: ${GITHUB_REPOSITORY:-}
+server_url: ${GITHUB_SERVER_URL:-https://github.com}
+EOF
+)
+fi
+
+USER_INPUT="${TFREPORT_INPUT_CUSTOM:-}"
+
+# --- compose: auto first so user values override on key collision ---
+if [ -n "$AUTO" ] && [ -n "$USER_INPUT" ]; then
+  COMBINED=$(printf '%s\n%s' "$AUTO" "$USER_INPUT")
+elif [ -n "$AUTO" ]; then
+  COMBINED="$AUTO"
+else
+  COMBINED="$USER_INPUT"
+fi
+
+if [ -z "$COMBINED" ]; then
   exit 0
 fi
 
+# --- parse each line into --custom key=value pairs ---
 while IFS= read -r line; do
   line="${line%%#*}"
   line="${line#"${line%%[![:space:]]*}"}"
@@ -52,4 +99,4 @@ while IFS= read -r line; do
     exit 1
   fi
   printf -- '--custom\n%s=%s\n' "$key" "$value"
-done <<< "$INPUT"
+done <<< "$COMBINED"
