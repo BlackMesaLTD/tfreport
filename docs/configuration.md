@@ -11,7 +11,7 @@ tfreport has two configuration surfaces. Knowing which one owns a given setting 
 **`.tfreport.yml` owns:**
 
 - **Domain knowledge** — what resources mean, how impacts are classified, what module names describe. (`presets`, `modules`, `global_attributes`, `resources`, `impact_defaults`)
-- **Global render defaults** — knobs that apply to every target unless overridden. (`output.max_resources_in_summary`, `output.code_format`, `output.step_summary_max_kb`, `output.group_submodules`, `output.submodule_depth`)
+- **Global render defaults** — knobs that apply to every target unless overridden. (`output.max_resources_in_summary`, `output.code_format`, `output.step_summary_max_kb`, `output.group_submodules`, `output.submodule_depth`, `output.changed_attrs_display`)
 - **Per-target overrides of those defaults** — e.g. `code_format: plain` just for `github-pr-comment`. (`output.targets.<name>.<knob>`)
 - **Target wiring** — which template file or section filter applies to which target. (`output.targets.<name>.{template_file, sections}`)
 - **Trivial inline templates** — one-liners like "add a banner above `.Title`". (`output.targets.<name>.template`)
@@ -135,6 +135,7 @@ output:
   submodule_depth: 1              # depth of nesting when group_submodules is true
   step_summary_max_kb: 800        # text plan budget for step-summary (GitHub limit ~1024KB)
   code_format: diff               # code block fence: diff | hcl | plain
+  changed_attrs_display: dash     # create/delete Changed column: dash | wordy | count | list
 
   targets:
     github-pr-comment:
@@ -162,13 +163,27 @@ key under `output.targets.<name>.<knob>`. Supported overrides:
 - `group_submodules`
 - `submodule_depth`
 - `step_summary_max_kb`
+- `changed_attrs_display`
 
 Resolution order (highest wins):
 
 1. Block argument in the template (e.g. `{{ text_plan "fence" "hcl" }}`)
 2. `output.targets.<target>.<knob>` (per-target override)
 3. `output.<knob>` (global default)
-4. Hardcoded fallback (e.g. 50 for max, 800 KB for budget, `"diff"` for code_format)
+4. Hardcoded fallback (e.g. 50 for max, 800 KB for budget, `"diff"` for code_format, `"dash"` for changed_attrs_display)
+
+### `changed_attrs_display`
+
+Controls how the Changed column renders for **create** and **delete** resources — where the attribute list is noise because every attribute is either new or going away. Update and replace actions always show the keys list regardless of this setting.
+
+| Value | Create cell | Delete cell |
+|-------|-------------|-------------|
+| `dash` (default) | `—` | `—` |
+| `wordy` | `new` | `removed` |
+| `count` | `3 attrs` | `2 attrs` |
+| `list` (legacy) | `a, b, c` | `x, y, z` |
+
+Applies to the `module_details`, `changed_resources_table`, and `modules_table` blocks. Each block accepts a `changed_attrs_display` arg that overrides the config value. For `modules_table`'s group-level `changed_attrs` union column, non-`list` modes also exclude create/delete resources' attrs from the union when update/replace resources are present.
 
 ### Template selection
 

@@ -88,6 +88,12 @@ func (ChangedResourcesTable) Render(ctx *BlockContext, args map[string]any) (str
 	isImportFilter := ArgString(args, "is_import", "")
 	max := ArgInt(args, "max", 0)
 
+	changedMode := ArgString(args, "changed_attrs_display", "")
+	if err := validChangedAttrsMode("changed_resources_table", changedMode); err != nil {
+		return "", err
+	}
+	changedMode = resolveChangedAttrsMode(ctx, changedMode)
+
 	r := currentReport(ctx)
 	if r == nil {
 		return "", nil
@@ -153,7 +159,7 @@ func (ChangedResourcesTable) Render(ctx *BlockContext, args map[string]any) (str
 	for _, row := range rows {
 		b.WriteString("|")
 		for _, col := range cols {
-			fmt.Fprintf(&b, " %s |", renderChangedResourceCell(ctx, row, col))
+			fmt.Fprintf(&b, " %s |", renderChangedResourceCell(ctx, row, col, changedMode))
 		}
 		b.WriteString("\n")
 	}
@@ -163,7 +169,7 @@ func (ChangedResourcesTable) Render(ctx *BlockContext, args map[string]any) (str
 	return strings.TrimRight(b.String(), "\n"), nil
 }
 
-func renderChangedResourceCell(ctx *BlockContext, row changedResourcesRow, col string) string {
+func renderChangedResourceCell(ctx *BlockContext, row changedResourcesRow, col, changedMode string) string {
 	rc := row.rc
 	mg := row.mg
 	switch col {
@@ -183,7 +189,7 @@ func renderChangedResourceCell(ctx *BlockContext, row changedResourcesRow, col s
 		r := currentReport(ctx)
 		return core.ResolveModuleType(topLevel, r.ModuleSources, mg.Name)
 	case "changed":
-		return formatAttrsKeysOnly(rc.ChangedAttributes)
+		return renderChangedCell(rc.Action, rc.ChangedAttributes, changedMode, formatAttrsKeysOnly)
 	case "impact":
 		return formatImpactWithNote(ctx, rc)
 	case "action":
@@ -306,6 +312,7 @@ func (ChangedResourcesTable) Doc() BlockDoc {
 			{Name: "resource_types", Type: "csv", Default: "(all)", Description: "Filter: keep rows whose ResourceType matches exactly."},
 			{Name: "is_import", Type: "string", Default: "(both)", Description: "`true` keeps only imports, `false` only non-imports, empty keeps both."},
 			{Name: "max", Type: "int", Default: "0 (no limit)", Description: "Cap number of rows; truncated rows collapse into `… N more resources`."},
+			{Name: "changed_attrs_display", Type: "string", Default: "(cfg.Output.ChangedAttrsDisplay or `dash`)", Description: "Render mode for the `changed` column on create/delete rows: `dash` (—), `wordy` (new/removed), `count` (N attrs), `list` (legacy full keys-list). Update/replace always show backticked keys."},
 		},
 		Columns: cols,
 	}

@@ -19,7 +19,7 @@
 
 | Resource | Action | Changed Attributes |
 |---|---|---|
-| `azurerm_private_endpoint.web` | ✅ create | location, name, tags |
+| `azurerm_private_endpoint.web` | ✅ create | — |
 
 </details>
 
@@ -27,7 +27,7 @@
 
 | Resource | Action | Changed Attributes |
 |---|---|---|
-| `azurerm_route.legacy` | ❗ delete | address_prefix, name, next_hop_type |
+| `azurerm_route.legacy` | ❗ delete | — |
 
 </details>
 

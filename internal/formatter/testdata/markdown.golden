@@ -18,14 +18,14 @@
 
 | Resource | Action | Changed Attributes |
 |---|---|---|
-| `azurerm_private_endpoint.web` | ✅ create | location, name, tags |
+| `azurerm_private_endpoint.web` | ✅ create | — |
 
 
 ### ❗ **routes** (1 resources: 1 delete)
 
 | Resource | Action | Changed Attributes |
 |---|---|---|
-| `azurerm_route.legacy` | ❗ delete | address_prefix, name, next_hop_type |
+| `azurerm_route.legacy` | ❗ delete | — |
 
 
 ### ⚠️ **virtual_network** (2 resources: 2 update)

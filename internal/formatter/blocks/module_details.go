@@ -89,6 +89,12 @@ func (ModuleDetails) Render(ctx *BlockContext, args map[string]any) (string, err
 	impactFilter := parseImpactFilterSet(ArgCSV(args, "impact"))
 	max := ArgInt(args, "max", 0)
 
+	changedMode := ArgString(args, "changed_attrs_display", "")
+	if err := validChangedAttrsMode("module_details", changedMode); err != nil {
+		return "", err
+	}
+	changedMode = resolveChangedAttrsMode(ctx, changedMode)
+
 	r := currentReport(ctx)
 	if r == nil || len(r.ModuleGroups) == 0 {
 		return "", nil
@@ -112,11 +118,11 @@ func (ModuleDetails) Render(ctx *BlockContext, args map[string]any) (string, err
 		writeModuleHeader(&b, ctx, mg, collapse)
 		switch format {
 		case "table":
-			writeModuleResourceTable(&b, ctx, mg, kept, cols)
+			writeModuleResourceTable(&b, ctx, mg, kept, cols, changedMode)
 		case "diff":
-			writeModuleDiffBlock(&b, ctx, kept)
+			writeModuleDiffBlock(&b, ctx, kept, changedMode)
 		case "list":
-			writeModuleListBlock(&b, ctx, kept)
+			writeModuleListBlock(&b, ctx, kept, changedMode)
 		}
 		if truncated > 0 {
 			fmt.Fprintf(&b, "\n_... %d more resources_\n\n", truncated)
@@ -174,20 +180,20 @@ func writeModuleFooter(b *strings.Builder, collapse bool) {
 	}
 }
 
-func writeModuleResourceTable(b *strings.Builder, ctx *BlockContext, mg core.ModuleGroup, changes []core.ResourceChange, cols []string) {
+func writeModuleResourceTable(b *strings.Builder, ctx *BlockContext, mg core.ModuleGroup, changes []core.ResourceChange, cols []string, changedMode string) {
 	headings := mapSlice(cols, func(id string) string { return moduleDetailsHeadings[id] })
 	writeColumnHeader(b, headings)
 	for _, rc := range changes {
 		b.WriteString("|")
 		for _, col := range cols {
-			fmt.Fprintf(b, " %s |", renderModuleDetailsCell(ctx, rc, mg, col))
+			fmt.Fprintf(b, " %s |", renderModuleDetailsCell(ctx, rc, mg, col, changedMode))
 		}
 		b.WriteString("\n")
 	}
 	b.WriteString("\n")
 }
 
-func renderModuleDetailsCell(ctx *BlockContext, rc core.ResourceChange, mg core.ModuleGroup, col string) string {
+func renderModuleDetailsCell(ctx *BlockContext, rc core.ResourceChange, mg core.ModuleGroup, col, changedMode string) string {
 	switch col {
 	case "resource":
 		return "`" + shortAddress(rc.Address, mg.Path) + "`"
@@ -196,11 +202,7 @@ func renderModuleDetailsCell(ctx *BlockContext, rc core.ResourceChange, mg core.
 	case "action":
 		return fmt.Sprintf("%s %s", core.ActionEmoji(rc.Action), rc.Action)
 	case "changed":
-		attrs := formatAttrsInline(rc.ChangedAttributes)
-		if attrs == "" {
-			return "—"
-		}
-		return attrs
+		return renderChangedCell(rc.Action, rc.ChangedAttributes, changedMode, formatAttrsInline)
 	case "impact":
 		return formatImpactWithNote(ctx, rc)
 	case "force_new":
@@ -217,12 +219,14 @@ func renderModuleDetailsCell(ctx *BlockContext, rc core.ResourceChange, mg core.
 	return ""
 }
 
-func writeModuleDiffBlock(b *strings.Builder, ctx *BlockContext, changes []core.ResourceChange) {
+func writeModuleDiffBlock(b *strings.Builder, ctx *BlockContext, changes []core.ResourceChange, changedMode string) {
 	b.WriteString("```diff\n")
 	for _, rc := range changes {
 		symbol := actionDiffSymbol(rc.Action)
+		// Only update/replace (or list mode) keep the [attrs] suffix — aligns
+		// with instance_detail's writeSyntheticDiff grammar.
 		attrs := ""
-		if len(rc.ChangedAttributes) > 0 {
+		if shouldShowInlineAttrs(rc.Action, changedMode) && len(rc.ChangedAttributes) > 0 {
 			attrs = fmt.Sprintf(" [%s]", formatAttrsInline(rc.ChangedAttributes))
 		}
 		label := core.ResourceDisplayLabel(rc)
@@ -231,18 +235,29 @@ func writeModuleDiffBlock(b *strings.Builder, ctx *BlockContext, changes []core.
 	b.WriteString("```\n\n")
 }
 
-func writeModuleListBlock(b *strings.Builder, ctx *BlockContext, changes []core.ResourceChange) {
+func writeModuleListBlock(b *strings.Builder, ctx *BlockContext, changes []core.ResourceChange, changedMode string) {
 	for _, rc := range changes {
 		emoji := core.ActionEmoji(rc.Action)
 		label := core.ResourceDisplayLabel(rc)
 		attrs := ""
-		if len(rc.ChangedAttributes) > 0 {
+		if shouldShowInlineAttrs(rc.Action, changedMode) && len(rc.ChangedAttributes) > 0 {
 			attrs = fmt.Sprintf(" [%s]", formatAttrsInline(rc.ChangedAttributes))
 		}
 		fmt.Fprintf(b, "- %s `%s`%s\n", emoji, rc.Address, attrs)
 		_ = label // reserved for future "human-readable name" column variant
 	}
 	b.WriteString("\n")
+}
+
+// shouldShowInlineAttrs decides whether the "[attr, attr]" suffix in diff
+// and list formats should be appended. Update/replace always carry it;
+// create/delete carry it only in "list" mode (legacy). Other actions
+// (read, no-op) never carry it.
+func shouldShowInlineAttrs(action core.Action, mode string) bool {
+	if action == core.ActionUpdate || action == core.ActionReplace {
+		return true
+	}
+	return mode == ChangedAttrsList
 }
 
 // Doc describes module_details for cmd/docgen.
@@ -267,6 +282,7 @@ func (ModuleDetails) Doc() BlockDoc {
 			{Name: "actions", Type: "csv", Default: "(all)", Description: "Filter: keep only resources whose action is in the set."},
 			{Name: "impact", Type: "csv", Default: "(all)", Description: "Filter: keep only resources whose Impact is in the set."},
 			{Name: "max", Type: "int", Default: "0 (no limit)", Description: "Cap resources per module section; extras collapse into `… N more resources`."},
+			{Name: "changed_attrs_display", Type: "string", Default: "(cfg.Output.ChangedAttrsDisplay or `dash`)", Description: "How the `changed` column / `[attrs]` suffix renders for create/delete rows: `dash` (—), `wordy` (new/removed), `count` (N attrs), `list` (legacy full keys-list). Update/replace always show keys-list."},
 		},
 		Columns: cols,
 	}

@@ -285,6 +285,7 @@ func outputOptions(out config.OutputConfig) blocks.OutputOptions {
 		SubmoduleDepth:        out.SubmoduleDepth,
 		StepSummaryMaxKB:      out.StepSummaryMaxKB,
 		CodeFormat:            out.CodeFormat,
+		ChangedAttrsDisplay:   out.ChangedAttrsDisplay,
 	}
 }
 

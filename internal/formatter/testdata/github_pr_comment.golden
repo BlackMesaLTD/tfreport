@@ -10,7 +10,7 @@
 <details><summary>✅ **privatelink** (1 resources: 1 create)</summary>
 
 ```diff
-+ azurerm_private_endpoint: pe-web [location, name, tags]
++ azurerm_private_endpoint: pe-web
 ```
 
 </details>
@@ -18,7 +18,7 @@
 <details><summary>❗ **routes** (1 resources: 1 delete)</summary>
 
 ```diff
-- azurerm_route: legacy-route [address_prefix, name, next_hop_type]
+- azurerm_route: legacy-route
 ```
 
 </details>

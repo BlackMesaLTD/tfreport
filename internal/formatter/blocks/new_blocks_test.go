@@ -890,6 +890,291 @@ func TestBanner_successStyle(t *testing.T) {
 	}
 }
 
+// ----- changed_attrs_display arg across blocks (create/delete field diffs) -----
+
+func changedDisplayReport() *core.Report {
+	return syntheticReport("a",
+		core.ModuleGroup{
+			Name: "m", Path: "module.m",
+			Changes: []core.ResourceChange{
+				{Address: "module.m.azurerm_subnet.new", ResourceType: "azurerm_subnet", ResourceName: "new", Action: core.ActionCreate,
+					ChangedAttributes: []core.ChangedAttribute{{Key: "a"}, {Key: "b"}, {Key: "c"}}},
+				{Address: "module.m.azurerm_subnet.gone", ResourceType: "azurerm_subnet", ResourceName: "gone", Action: core.ActionDelete,
+					ChangedAttributes: []core.ChangedAttribute{{Key: "x"}, {Key: "y"}}},
+				{Address: "module.m.azurerm_subnet.upd", ResourceType: "azurerm_subnet", ResourceName: "upd", Action: core.ActionUpdate,
+					ChangedAttributes: []core.ChangedAttribute{{Key: "tags"}}},
+			},
+			ActionCounts: map[core.Action]int{core.ActionCreate: 1, core.ActionDelete: 1, core.ActionUpdate: 1},
+		},
+	)
+}
+
+func TestModuleDetails_changedAttrsDefault_createDelete(t *testing.T) {
+	r := changedDisplayReport()
+	out, err := ModuleDetails{}.Render(&BlockContext{Target: "markdown", Report: r},
+		map[string]any{"actions": "create,delete,update"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Create row: should show — instead of "a, b, c"
+	if !strings.Contains(out, "| ✅ create | — |") {
+		t.Errorf("create row should show — for Changed; got:\n%s", out)
+	}
+	// Delete row: should show — instead of "x, y"
+	if !strings.Contains(out, "| ❗ delete | — |") {
+		t.Errorf("delete row should show —; got:\n%s", out)
+	}
+	// Update row: keys list preserved.
+	if !strings.Contains(out, "| ⚠️ update | tags |") {
+		t.Errorf("update row should preserve keys list; got:\n%s", out)
+	}
+}
+
+func TestModuleDetails_changedAttrsWordy(t *testing.T) {
+	r := changedDisplayReport()
+	out, err := ModuleDetails{}.Render(&BlockContext{Target: "markdown", Report: r},
+		map[string]any{"actions": "create,delete,update", "changed_attrs_display": "wordy"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "| ✅ create | new |") {
+		t.Errorf("wordy mode: create → 'new', got:\n%s", out)
+	}
+	if !strings.Contains(out, "| ❗ delete | removed |") {
+		t.Errorf("wordy mode: delete → 'removed', got:\n%s", out)
+	}
+	if !strings.Contains(out, "| ⚠️ update | tags |") {
+		t.Errorf("wordy mode: update unchanged, got:\n%s", out)
+	}
+}
+
+func TestModuleDetails_changedAttrsCount(t *testing.T) {
+	r := changedDisplayReport()
+	out, err := ModuleDetails{}.Render(&BlockContext{Target: "markdown", Report: r},
+		map[string]any{"actions": "create,delete,update", "changed_attrs_display": "count"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "| ✅ create | 3 attrs |") {
+		t.Errorf("count mode: create → '3 attrs', got:\n%s", out)
+	}
+	if !strings.Contains(out, "| ❗ delete | 2 attrs |") {
+		t.Errorf("count mode: delete → '2 attrs', got:\n%s", out)
+	}
+}
+
+func TestModuleDetails_changedAttrsList_legacy(t *testing.T) {
+	r := changedDisplayReport()
+	out, err := ModuleDetails{}.Render(&BlockContext{Target: "markdown", Report: r},
+		map[string]any{"actions": "create,delete,update", "changed_attrs_display": "list"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "| ✅ create | a, b, c |") {
+		t.Errorf("list mode: create → full keys list, got:\n%s", out)
+	}
+	if !strings.Contains(out, "| ❗ delete | x, y |") {
+		t.Errorf("list mode: delete → full keys list, got:\n%s", out)
+	}
+}
+
+func TestModuleDetails_changedAttrsUnknownMode(t *testing.T) {
+	r := changedDisplayReport()
+	_, err := ModuleDetails{}.Render(&BlockContext{Target: "markdown", Report: r},
+		map[string]any{"changed_attrs_display": "bogus"})
+	if err == nil {
+		t.Fatal("expected error for unknown changed_attrs_display mode")
+	}
+}
+
+func TestModuleDetails_changedAttrsContextDefault(t *testing.T) {
+	r := changedDisplayReport()
+	// Set ctx-level default; no arg → ctx wins.
+	out, err := ModuleDetails{}.Render(&BlockContext{
+		Target: "markdown", Report: r,
+		Output: OutputOptions{ChangedAttrsDisplay: "wordy"},
+	}, map[string]any{"actions": "create,delete,update"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "| ✅ create | new |") {
+		t.Errorf("ctx wordy default: create → 'new', got:\n%s", out)
+	}
+	// Arg overrides ctx.
+	out, err = ModuleDetails{}.Render(&BlockContext{
+		Target: "markdown", Report: r,
+		Output: OutputOptions{ChangedAttrsDisplay: "wordy"},
+	}, map[string]any{"actions": "create,delete,update", "changed_attrs_display": "count"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "| ✅ create | 3 attrs |") {
+		t.Errorf("arg overrides ctx: create → '3 attrs', got:\n%s", out)
+	}
+}
+
+func TestModuleDetails_changedAttrsDiffFormat(t *testing.T) {
+	r := changedDisplayReport()
+	// Default mode → create/delete should NOT carry [attrs] in the diff block
+	out, err := ModuleDetails{}.Render(&BlockContext{Target: "markdown", Report: r},
+		map[string]any{"actions": "create,delete,update", "format": "diff"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Create: "+ type: label" with no [attrs]
+	if !strings.Contains(out, "+ azurerm_subnet: new\n") {
+		t.Errorf("diff create should have no [attrs] suffix, got:\n%s", out)
+	}
+	// Delete: "- type: label" with no [attrs]
+	if !strings.Contains(out, "- azurerm_subnet: gone\n") {
+		t.Errorf("diff delete should have no [attrs] suffix, got:\n%s", out)
+	}
+	// Update: keeps [attrs]
+	if !strings.Contains(out, "! azurerm_subnet: upd [tags]\n") {
+		t.Errorf("diff update should keep [attrs], got:\n%s", out)
+	}
+}
+
+func TestModuleDetails_changedAttrsDiffFormatListMode(t *testing.T) {
+	r := changedDisplayReport()
+	// List mode: create/delete regain their [attrs] suffix in diff
+	out, err := ModuleDetails{}.Render(&BlockContext{Target: "markdown", Report: r},
+		map[string]any{"actions": "create,delete,update", "format": "diff", "changed_attrs_display": "list"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "+ azurerm_subnet: new [a, b, c]") {
+		t.Errorf("list mode diff should include [attrs] on create, got:\n%s", out)
+	}
+}
+
+func TestChangedResourcesTable_changedAttrsDefault(t *testing.T) {
+	r := changedDisplayReport()
+	out, err := ChangedResourcesTable{}.Render(&BlockContext{Target: "markdown", Report: r},
+		map[string]any{"actions": "all"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Create + delete rows should carry — for Changed column (dash default).
+	if !strings.Contains(out, "| subnet | new |") || !strings.Contains(out, "— | 🟢") {
+		// Hard to anchor exactly because the full row has multiple cells;
+		// check the create label + dash appearing together.
+		if !strings.Contains(out, "| new | — |") {
+			t.Errorf("expected create row Changed=—, got:\n%s", out)
+		}
+	}
+	// Update keeps keys list (backticked).
+	if !strings.Contains(out, "`tags`") {
+		t.Errorf("expected update row to keep `tags`, got:\n%s", out)
+	}
+}
+
+func TestChangedResourcesTable_changedAttrsWordy(t *testing.T) {
+	r := changedDisplayReport()
+	out, err := ChangedResourcesTable{}.Render(&BlockContext{Target: "markdown", Report: r},
+		map[string]any{"actions": "all", "changed_attrs_display": "wordy"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "| new |") {
+		// Weak but sufficient — 'new' appears as the resource name too;
+		// check both create row markers present.
+		t.Errorf("wordy mode should emit 'new' for create Changed cell, got:\n%s", out)
+	}
+	if !strings.Contains(out, "removed") {
+		t.Errorf("wordy mode should emit 'removed' for delete Changed cell, got:\n%s", out)
+	}
+}
+
+func TestChangedResourcesTable_changedAttrsUnknownMode(t *testing.T) {
+	r := changedDisplayReport()
+	_, err := ChangedResourcesTable{}.Render(&BlockContext{Target: "markdown", Report: r},
+		map[string]any{"changed_attrs_display": "bogus"})
+	if err == nil {
+		t.Fatal("expected error for unknown mode")
+	}
+}
+
+func TestModulesTable_changedAttrsUnionExcludesCreateDelete(t *testing.T) {
+	r := changedDisplayReport()
+	// Default mode: mixed group → union excludes create/delete's attrs.
+	out, err := ModulesTable{}.Render(&BlockContext{Target: "markdown", Report: r},
+		map[string]any{"columns": "module,changed_attrs"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "`tags`") {
+		t.Errorf("union should keep update's tags attr, got:\n%s", out)
+	}
+	for _, excluded := range []string{"`a`", "`b`", "`c`", "`x`", "`y`"} {
+		if strings.Contains(out, excluded) {
+			t.Errorf("union should exclude create/delete attrs (%s), got:\n%s", excluded, out)
+		}
+	}
+}
+
+func TestModulesTable_changedAttrsAllCreateGroupWordy(t *testing.T) {
+	// A module group that's 100% create resources.
+	r := syntheticReport("a", core.ModuleGroup{
+		Name: "m", Path: "module.m",
+		Changes: []core.ResourceChange{
+			{Address: "a", Action: core.ActionCreate, ChangedAttributes: []core.ChangedAttribute{{Key: "a"}, {Key: "b"}}},
+		},
+		ActionCounts: map[core.Action]int{core.ActionCreate: 1},
+	})
+	out, err := ModulesTable{}.Render(&BlockContext{Target: "markdown", Report: r},
+		map[string]any{"columns": "module,changed_attrs", "changed_attrs_display": "wordy"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "| new |") {
+		t.Errorf("all-create group wordy → 'new', got:\n%s", out)
+	}
+}
+
+func TestModulesTable_changedAttrsMixedCreateDeleteWordy(t *testing.T) {
+	r := syntheticReport("a", core.ModuleGroup{
+		Name: "m", Path: "module.m",
+		Changes: []core.ResourceChange{
+			{Address: "a", Action: core.ActionCreate, ChangedAttributes: []core.ChangedAttribute{{Key: "k"}}},
+			{Address: "b", Action: core.ActionDelete, ChangedAttributes: []core.ChangedAttribute{{Key: "z"}}},
+		},
+		ActionCounts: map[core.Action]int{core.ActionCreate: 1, core.ActionDelete: 1},
+	})
+	out, err := ModulesTable{}.Render(&BlockContext{Target: "markdown", Report: r},
+		map[string]any{"columns": "module,changed_attrs", "changed_attrs_display": "wordy"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "new+removed") {
+		t.Errorf("mixed create+delete group wordy → 'new+removed', got:\n%s", out)
+	}
+}
+
+func TestModulesTable_changedAttrsListModeLegacy(t *testing.T) {
+	r := changedDisplayReport()
+	out, err := ModulesTable{}.Render(&BlockContext{Target: "markdown", Report: r},
+		map[string]any{"columns": "module,changed_attrs", "changed_attrs_display": "list"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Legacy: every key across the group including create/delete attrs.
+	for _, want := range []string{"`a`", "`b`", "`c`", "`tags`", "`x`", "`y`"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("list mode should include all attrs (missing %s), got:\n%s", want, out)
+		}
+	}
+}
+
+func TestModulesTable_changedAttrsUnknownMode(t *testing.T) {
+	r := changedDisplayReport()
+	_, err := ModulesTable{}.Render(&BlockContext{Target: "markdown", Report: r},
+		map[string]any{"changed_attrs_display": "bogus"})
+	if err == nil {
+		t.Fatal("expected error for unknown mode")
+	}
+}
+
 // ----- imports_list (Phase 4a) -----
 
 func importsReport() *core.Report {

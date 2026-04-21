@@ -153,6 +153,92 @@ func formatAttrsInline(attrs []core.ChangedAttribute) string {
 	return strings.Join(parts, ", ")
 }
 
+// Valid values for the changed_attrs_display arg / OutputOptions.ChangedAttrsDisplay
+// field. Centralized so blocks and tests share one source of truth.
+const (
+	ChangedAttrsDash  = "dash"  // "—" on create/delete
+	ChangedAttrsWordy = "wordy" // "new" / "removed" on create/delete
+	ChangedAttrsCount = "count" // "N attrs" on create/delete
+	ChangedAttrsList  = "list"  // legacy: always render the keys-list
+)
+
+// validChangedAttrsMode reports whether mode is one of the four accepted
+// values (or empty, which means "use default"). Returns nil on success and a
+// typed error on unknown input matching the `unknown column %q (valid: …)`
+// grammar used elsewhere.
+func validChangedAttrsMode(blockName, mode string) error {
+	switch mode {
+	case "", ChangedAttrsDash, ChangedAttrsWordy, ChangedAttrsCount, ChangedAttrsList:
+		return nil
+	}
+	return fmt.Errorf("%s: unknown changed_attrs_display %q (valid: dash, wordy, count, list)", blockName, mode)
+}
+
+// renderChangedCell produces the content for a "Changed" / "Changed
+// Attributes" cell given the resource's action, its changed attributes,
+// and the display mode. Update/replace always delegate to formatter (so
+// callers keep their own cell formatting — backticked keys, inline joined
+// with descriptions, etc.). Create, delete, read, and no-op honor mode:
+//
+//   - dash  (default) → "—"
+//   - wordy           → "new" for create, "removed" for delete, "—" for read/no-op
+//   - count           → "N attrs"
+//   - list            → delegate to formatter (legacy full keys-list)
+//
+// Empty mode is treated as dash. When update/replace formatter output is
+// empty (rare: an update with zero changed attrs), falls back to "—" so
+// the cell is never blank.
+func renderChangedCell(
+	action core.Action,
+	attrs []core.ChangedAttribute,
+	mode string,
+	formatter func([]core.ChangedAttribute) string,
+) string {
+	if mode == "" {
+		mode = ChangedAttrsDash
+	}
+	if action == core.ActionUpdate || action == core.ActionReplace {
+		s := formatter(attrs)
+		if s == "" {
+			return "—"
+		}
+		return s
+	}
+	switch mode {
+	case ChangedAttrsWordy:
+		switch action {
+		case core.ActionCreate:
+			return "new"
+		case core.ActionDelete:
+			return "removed"
+		default:
+			return "—"
+		}
+	case ChangedAttrsCount:
+		return fmt.Sprintf("%d attrs", len(attrs))
+	case ChangedAttrsList:
+		s := formatter(attrs)
+		if s == "" {
+			return "—"
+		}
+		return s
+	default: // ChangedAttrsDash
+		return "—"
+	}
+}
+
+// resolveChangedAttrsMode picks the effective display mode for a block call.
+// Precedence: per-block arg > ctx.Output.ChangedAttrsDisplay > "dash".
+func resolveChangedAttrsMode(ctx *BlockContext, argMode string) string {
+	if argMode != "" {
+		return argMode
+	}
+	if ctx != nil && ctx.Output.ChangedAttrsDisplay != "" {
+		return ctx.Output.ChangedAttrsDisplay
+	}
+	return ChangedAttrsDash
+}
+
 // formatAttrsKeysOnly returns backtick-quoted, comma-separated attribute
 // keys (no descriptions). Used in the changed-resources impact table.
 func formatAttrsKeysOnly(attrs []core.ChangedAttribute) string {
