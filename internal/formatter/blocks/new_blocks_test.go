@@ -332,6 +332,107 @@ func TestSummaryTable_resourceTypeImportOnlyLabel(t *testing.T) {
 	}
 }
 
+// ----- summary_table columns arg -----
+
+func TestSummaryTable_columnsSubset_module(t *testing.T) {
+	r := syntheticReport("a",
+		syntheticGroup("m1", core.ResourceChange{Address: "a", Action: core.ActionCreate}),
+		syntheticGroup("m2", core.ResourceChange{Address: "b", Action: core.ActionUpdate}),
+	)
+	out, err := SummaryTable{}.Render(&BlockContext{Target: "markdown", Report: r},
+		map[string]any{"group": "module", "columns": "module,resources"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "| Module | Resources |") {
+		t.Errorf("want only Module+Resources header, got:\n%s", out)
+	}
+	if strings.Contains(out, "Actions") {
+		t.Errorf("Actions column should be dropped, got:\n%s", out)
+	}
+}
+
+func TestSummaryTable_columnsSubset_action(t *testing.T) {
+	r := syntheticReport("a", syntheticGroup("m",
+		core.ResourceChange{Address: "a", Action: core.ActionCreate},
+		core.ResourceChange{Address: "b", Action: core.ActionDelete},
+	))
+	out, err := SummaryTable{}.Render(&BlockContext{Target: "markdown", Report: r},
+		map[string]any{"group": "action", "columns": "action,count"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "| Action | Count |") {
+		t.Errorf("want Action+Count header only, got:\n%s", out)
+	}
+	if strings.Contains(out, "Impact") {
+		t.Errorf("Impact column should be dropped, got:\n%s", out)
+	}
+}
+
+func TestSummaryTable_columnsSubset_resourceType(t *testing.T) {
+	r := syntheticReport("a", syntheticGroup("m",
+		core.ResourceChange{Address: "a", ResourceType: "azurerm_subnet", Action: core.ActionUpdate},
+	))
+	out, err := SummaryTable{}.Render(&BlockContext{Target: "markdown", Report: r},
+		map[string]any{"group": "resource_type", "columns": "resource_type,count"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "| Resource Type | Count |") {
+		t.Errorf("want Resource Type+Count header only, got:\n%s", out)
+	}
+	if strings.Contains(out, "Actions") {
+		t.Errorf("Actions column should be dropped, got:\n%s", out)
+	}
+}
+
+func TestSummaryTable_unknownColumn(t *testing.T) {
+	r := syntheticReport("a",
+		syntheticGroup("m1", core.ResourceChange{Address: "a", Action: core.ActionCreate}),
+	)
+	_, err := SummaryTable{}.Render(&BlockContext{Target: "markdown", Report: r},
+		map[string]any{"group": "module", "columns": "module,bogus"})
+	if err == nil {
+		t.Fatal("expected error for unknown column")
+	}
+	if !strings.Contains(err.Error(), "bogus") {
+		t.Errorf("error should name the offending column: %v", err)
+	}
+	if !strings.Contains(err.Error(), "valid:") {
+		t.Errorf("error should list valid columns: %v", err)
+	}
+}
+
+func TestSummaryTable_columnsExplicitDescriptionOnEmpty(t *testing.T) {
+	// When callers explicitly request `description`, we show it even when
+	// no row carries one (renders "—"). Default behavior still auto-hides.
+	r := syntheticReport("a",
+		syntheticGroup("m1",
+			core.ResourceChange{Address: "a", ResourceType: "t", Action: core.ActionUpdate},
+		),
+	)
+	r.ModuleSources = map[string]string{"m1": "registry.tf/foo/bar/azurerm"}
+	// Default: no description in output (auto-hidden).
+	out, err := SummaryTable{}.Render(&BlockContext{Target: "markdown", Report: r},
+		map[string]any{"group": "module_type"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "Description") {
+		t.Errorf("default should hide Description when empty, got:\n%s", out)
+	}
+	// Explicit request: show it.
+	out, err = SummaryTable{}.Render(&BlockContext{Target: "markdown", Report: r},
+		map[string]any{"group": "module_type", "columns": "module_type,description,resources"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "Description") {
+		t.Errorf("explicit request should include Description header, got:\n%s", out)
+	}
+}
+
 func TestSummaryTable_unknownGroup(t *testing.T) {
 	_, err := SummaryTable{}.Render(&BlockContext{Target: "markdown", Report: &core.Report{}}, map[string]any{"group": "bogus"})
 	if err == nil {

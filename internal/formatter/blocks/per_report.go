@@ -156,4 +156,17 @@ func renderRawKeyChangesBullets(ctx *BlockContext) string {
 	return strings.TrimRight(b.String(), "\n")
 }
 
+// Doc describes per_report for cmd/docgen.
+func (PerReport) Doc() BlockDoc {
+	return BlockDoc{
+		Name:    "per_report",
+		Summary: "One 'report card' section for a single report. Declarative replacement for the {{ range .Reports }}<details>…{{ end }} loop in multi-report templates. Never wraps title/plan_counts/footer (those are top-level chrome).",
+		Args: []ArgDoc{
+			{Name: "report", Type: "*core.Report", Default: "—", Description: "Required. The report to render; pass `$r` from range .Reports."},
+			{Name: "show", Type: "csv", Default: "key_changes", Description: "Inner blocks to compose: key_changes, summary_table, module_details, changed_resources_table, text_plan, instance_detail."},
+			{Name: "collapse", Type: "bool", Default: "(target uses <details>)", Description: "Force wrap/unwrap in <details>. Rarely set explicitly."},
+		},
+	}
+}
+
 func init() { defaultRegistry.Register(PerReport{}) }

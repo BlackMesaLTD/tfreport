@@ -3,7 +3,7 @@
 
 
 | Subscription | Resources | Impact | Actions |
-|--------------|-----------|--------|---------|
+|---|---|---|---|
 | sub-a | 4 | ❗ high | 1 create, 2 update, 1 delete |
 | sub-b | 12 | ❗ high | 4 create, 6 update, 2 delete |
 

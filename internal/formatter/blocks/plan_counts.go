@@ -16,4 +16,12 @@ func (PlanCounts) Render(ctx *BlockContext, _ map[string]any) (string, error) {
 	return fmt.Sprintf("Plan: %s.", planCountsLine(r.ActionCounts)), nil
 }
 
+// Doc describes plan_counts for cmd/docgen.
+func (PlanCounts) Doc() BlockDoc {
+	return BlockDoc{
+		Name:    "plan_counts",
+		Summary: "Terraform-style verb summary (`Plan: 1 to add, 2 to change, 1 to destroy.`). Target-agnostic. Empty plan renders `No changes detected.`",
+	}
+}
+
 func init() { defaultRegistry.Register(PlanCounts{}) }

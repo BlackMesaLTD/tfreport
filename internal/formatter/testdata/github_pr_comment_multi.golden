@@ -3,7 +3,7 @@
 
 
 | Subscription | Impact | Add | Update | Delete | Replace |
-|--------------|--------|-----|--------|--------|---------|
+|---|---|---|---|---|---|
 | sub-a | high | 1 | 2 | 1 | 0 |
 | sub-b | high | 4 | 6 | 2 | 0 |
 

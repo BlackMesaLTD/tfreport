@@ -126,6 +126,33 @@ func TestInstanceDetail_renders(t *testing.T) {
 	}
 }
 
+// TestAllBlocksHaveValidDoc asserts every registered block returns a BlockDoc
+// whose Name matches the registry key. This catches drift between Block.Name()
+// and BlockDoc.Name that would otherwise corrupt generated docs.
+func TestAllBlocksHaveValidDoc(t *testing.T) {
+	reg := Default()
+	names := reg.Names()
+	if len(names) == 0 {
+		t.Fatal("default registry is empty — init() registrations missing?")
+	}
+	for _, name := range names {
+		b, ok := reg.Get(name)
+		if !ok {
+			t.Fatalf("registry reported %q then failed to Get", name)
+		}
+		doc := b.Doc()
+		if doc.Name == "" {
+			t.Errorf("block %q: Doc().Name is empty", name)
+		}
+		if doc.Name != name {
+			t.Errorf("block %q: Doc().Name=%q (mismatch)", name, doc.Name)
+		}
+		if doc.Summary == "" {
+			t.Errorf("block %q: Doc().Summary is empty", name)
+		}
+	}
+}
+
 func TestFooter(t *testing.T) {
 	ctx := fixtureCtx(t, "github-pr-body")
 	out, err := Footer{}.Render(ctx, nil)

@@ -177,4 +177,16 @@ func truncLabels(labels []string, max int) string {
 	return fmt.Sprintf("%s (+ %d more)", strings.Join(labels[:max], ", "), len(labels)-max)
 }
 
+// Doc describes fleet_homogeneity for cmd/docgen.
+func (FleetHomogeneity) Doc() BlockDoc {
+	return BlockDoc{
+		Name:    "fleet_homogeneity",
+		Summary: "Detects uniformity across multi-report renders. When all reports match, summarizes once; when they diverge, flags outliers against the majority pattern.",
+		Args: []ArgDoc{
+			{Name: "style", Type: "string", Default: "summary", Description: "One of `summary`, `banner`, `table`."},
+			{Name: "fingerprint", Type: "string", Default: "key_changes", Description: "Equality strategy: `key_changes` (text-based) or `action_counts` (coarser, shape-based)."},
+		},
+	}
+}
+
 func init() { defaultRegistry.Register(FleetHomogeneity{}) }

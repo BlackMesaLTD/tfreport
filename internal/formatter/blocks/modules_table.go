@@ -216,4 +216,49 @@ func sortedColumnIDs() []string {
 	return ids
 }
 
+// Doc describes modules_table for cmd/docgen.
+func (ModulesTable) Doc() BlockDoc {
+	cols := make([]ColumnDoc, 0, len(moduleColumns))
+	for id, col := range moduleColumns {
+		cols = append(cols, ColumnDoc{
+			ID:          id,
+			Heading:     col.heading,
+			Description: moduleColumnDescriptions[id],
+		})
+	}
+	sort.Slice(cols, func(i, j int) bool { return cols[i].ID < cols[j].ID })
+
+	return BlockDoc{
+		Name:    "modules_table",
+		Summary: "Flat one-row-per-module-group markdown table with pluggable columns. Pick columns, optionally cap rows.",
+		Args: []ArgDoc{
+			{Name: "report", Type: "*core.Report", Default: "(current report)", Description: "Explicit report to render. Required when looping range .Reports; pass $r."},
+			{Name: "columns", Type: "csv", Default: "module,changed_attrs", Description: "Comma-separated column IDs to include. See Columns below."},
+			{Name: "max", Type: "int", Default: "0 (no limit)", Description: "Cap the table at this many rows. Extra rows collapse into a single '…' row."},
+			{Name: "empty", Type: "string", Default: "—", Description: "Cell value used for empty/missing data."},
+		},
+		Columns: cols,
+		Examples: []ExampleDoc{
+			{
+				Template: `{{ modules_table "report" $r "columns" "module_type,module,changed_attrs" }}`,
+				Rendered: "| Module type | Module | Changed attributes |\n|---|---|---|\n| `virtual_network` | `vnet` | `address_space`, `tags` |",
+			},
+		},
+	}
+}
+
+// moduleColumnDescriptions carries one-line descriptions for each column ID
+// — separate from the renderer map so godoc stays close to presentation.
+var moduleColumnDescriptions = map[string]string{
+	"module_type":   "Module type derived from the source URL (e.g. `virtual_network`).",
+	"module":        "Module call name (ModuleGroup.Name).",
+	"module_path":   "Full dotted module path (e.g. `module.vnet.module.subnet`).",
+	"description":   "Team-supplied module description from config or presets.",
+	"resources":     "Count of resource changes in the group.",
+	"actions":       "Action summary line (e.g. `2 update, 1 create`).",
+	"impact":        "Worst impact across the group, with emoji.",
+	"changed_attrs": "Union of all changed attribute keys in the group.",
+	"subscription":  "", // reserved for future use
+}
+
 func init() { defaultRegistry.Register(ModulesTable{}) }

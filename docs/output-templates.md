@@ -21,6 +21,12 @@ customizable.
 > **Designing templates for your team?** See
 > [docs/template-design-guide.md](template-design-guide.md) for the
 > repeatable five-step design loop and the gap roadmap.
+>
+> **Looking for the authoritative block reference?** See
+> [docs/blocks.md](blocks.md) — auto-generated from `Block.Doc()`
+> metadata via `make docs`. Lists every registered block's args, columns
+> (where applicable), and example renderings. The sections below in
+> this file are the narrative companion; blocks.md is the truth.
 
 ---
 

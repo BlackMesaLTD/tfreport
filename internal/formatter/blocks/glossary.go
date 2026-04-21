@@ -70,4 +70,16 @@ func (Glossary) Render(_ *BlockContext, args map[string]any) (string, error) {
 	return strings.TrimRight(b.String(), "\n"), nil
 }
 
+// Doc describes glossary for cmd/docgen.
+func (Glossary) Doc() BlockDoc {
+	return BlockDoc{
+		Name:    "glossary",
+		Summary: "Opt-in blockquote defining tfreport's action + impact vocabulary. Never in default templates.",
+		Args: []ArgDoc{
+			{Name: "include", Type: "csv", Default: "actions,impacts", Description: "Which sections to render. Any subset of `actions`, `impacts`, `imports`."},
+			{Name: "level", Type: "string", Default: "beginner", Description: "`beginner` (verbose explanations) or `intermediate` (compact)."},
+		},
+	}
+}
+
 func init() { defaultRegistry.Register(Glossary{}) }

@@ -81,4 +81,16 @@ func parseImpactFilter(csv []string) map[core.Impact]struct{} {
 	return out
 }
 
+// Doc describes key_changes for cmd/docgen.
+func (KeyChanges) Doc() BlockDoc {
+	return BlockDoc{
+		Name:    "key_changes",
+		Summary: "Plain-English summary bullets, impact-tagged, with optional filter and truncation.",
+		Args: []ArgDoc{
+			{Name: "max", Type: "int", Default: "0 (no limit)", Description: "Cap number of bullets; extras collapse into a `… N more changes` line."},
+			{Name: "impact", Type: "csv", Default: "(all)", Description: "Filter: keep only entries whose Impact is in the csv set (e.g. `critical,high`)."},
+		},
+	}
+}
+
 func init() { defaultRegistry.Register(KeyChanges{}) }

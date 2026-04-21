@@ -8,20 +8,26 @@ import (
 	"github.com/BlackMesaLTD/tfreport/internal/core"
 )
 
-// SummaryTable renders the top-level resource count table. Supported groupings:
+// SummaryTable renders the top-level resource count table. Five groupings,
+// each with its own column registry; the `columns` csv arg picks a subset.
 //
 //	group="module_type"   — two-level (module source type → instances). Used by
 //	                        step-summary. Requires report.ModuleSources.
 //	group="module"        — flat per-module rows. Used by markdown / pr-body.
 //	group="subscription"  — per-report rows. Used by pr-body / pr-comment when
 //	                        multi-report; produces the cross-sub summary.
+//	group="action"        — one row per action type.
+//	group="resource_type" — one row per resource type.
 //
-// Optional args:
+// Args:
 //
-//	hide_empty bool (default false)  — drop rows with zero non-read resources
-//	max        int  (default 0)      — cap the number of rows; 0 = unlimited.
-//	                                   The `action` grouping always shows all
-//	                                   five actions (max has no effect).
+//	group       string — picks one of the five groupings (default target-dependent).
+//	columns     csv    — column subset for the chosen grouping. Default is the
+//	                     full column set for that grouping (preserves existing
+//	                     output). Unknown IDs return a typed error.
+//	hide_empty  bool (default false)  — drop rows with zero non-read resources.
+//	max         int  (default 0)      — cap rows. The `action` grouping always
+//	                                    shows all five actions (max has no effect).
 type SummaryTable struct{}
 
 func (SummaryTable) Name() string { return "summary_table" }
@@ -30,71 +36,134 @@ func (SummaryTable) Render(ctx *BlockContext, args map[string]any) (string, erro
 	group := ArgString(args, "group", defaultSummaryGroup(ctx))
 	hideEmpty := ArgBool(args, "hide_empty", false)
 	max := ArgInt(args, "max", 0)
+	columns := ArgCSV(args, "columns")
 
 	switch group {
 	case "module_type":
-		return renderModuleTypeTable(ctx, hideEmpty, max), nil
+		return renderModuleTypeTable(ctx, columns, hideEmpty, max)
 	case "module":
-		return renderModuleTable(ctx, hideEmpty, max), nil
+		return renderModuleTable(ctx, columns, hideEmpty, max)
 	case "subscription":
-		return renderSubscriptionTable(ctx, hideEmpty, max), nil
+		return renderSubscriptionTable(ctx, columns, hideEmpty, max)
 	case "action":
-		return renderActionTable(ctx, hideEmpty), nil
+		return renderActionTable(ctx, columns, hideEmpty)
 	case "resource_type":
-		return renderResourceTypeTable(ctx, hideEmpty, max), nil
+		return renderResourceTypeTable(ctx, columns, hideEmpty, max)
 	default:
 		return "", fmt.Errorf("summary_table: unknown group %q (valid: module, module_type, subscription, action, resource_type)", group)
 	}
 }
 
+// --- action grouping ---
+
+type actionRow struct {
+	action core.Action
+	count  int
+}
+
+var summaryActionColumns = []string{"action", "count", "impact"}
+var summaryActionHeadings = map[string]string{
+	"action": "Action",
+	"count":  "Count",
+	"impact": "Impact",
+}
+
+func renderActionRow(row actionRow, col string) string {
+	switch col {
+	case "action":
+		return fmt.Sprintf("%s %s", core.ActionEmoji(row.action), row.action)
+	case "count":
+		return fmt.Sprintf("%d", row.count)
+	case "impact":
+		if row.count == 0 {
+			return "—"
+		}
+		return defaultActionImpact(row.action)
+	}
+	return ""
+}
+
 // renderActionTable produces a table with one row per action type.
-func renderActionTable(ctx *BlockContext, hideEmpty bool) string {
+func renderActionTable(ctx *BlockContext, columns []string, hideEmpty bool) (string, error) {
 	r := currentReport(ctx)
 	if r == nil {
-		return ""
+		return "", nil
+	}
+
+	cols := defaultCols(columns, summaryActionColumns)
+	if err := validateColumns("summary_table", cols, toSet(summaryActionColumns)); err != nil {
+		return "", err
 	}
 
 	order := []core.Action{core.ActionCreate, core.ActionUpdate, core.ActionDelete, core.ActionReplace, core.ActionRead}
 
 	var b strings.Builder
-	b.WriteString("| Action | Count | Impact |\n")
-	b.WriteString("|--------|-------|--------|\n")
+	headings := mapSlice(cols, func(id string) string { return summaryActionHeadings[id] })
+	writeColumnHeader(&b, headings)
 	for _, a := range order {
 		c := r.ActionCounts[a]
 		if hideEmpty && c == 0 {
 			continue
 		}
-		if c == 0 {
-			fmt.Fprintf(&b, "| %s %s | 0 | — |\n", core.ActionEmoji(a), a)
-			continue
+		row := actionRow{action: a, count: c}
+		b.WriteString("|")
+		for _, col := range cols {
+			fmt.Fprintf(&b, " %s |", renderActionRow(row, col))
 		}
-		fmt.Fprintf(&b, "| %s %s | %d | %s |\n",
-			core.ActionEmoji(a), a, c, defaultActionImpact(a))
+		b.WriteString("\n")
 	}
-	return strings.TrimRight(b.String(), "\n")
+	return strings.TrimRight(b.String(), "\n"), nil
+}
+
+// --- resource_type grouping ---
+
+type resourceTypeRow struct {
+	typeName string
+	count    int
+	actions  map[core.Action]int
+	imports  int
+}
+
+var summaryResourceTypeColumns = []string{"resource_type", "count", "actions"}
+var summaryResourceTypeHeadings = map[string]string{
+	"resource_type": "Resource Type",
+	"count":         "Count",
+	"actions":       "Actions",
+}
+
+func renderResourceTypeRow(ctx *BlockContext, row *resourceTypeRow, col string) string {
+	switch col {
+	case "resource_type":
+		name := displayName(ctx, row.typeName)
+		return fmt.Sprintf("%s (`%s`)", name, row.typeName)
+	case "count":
+		return fmt.Sprintf("%d", row.count)
+	case "actions":
+		return describeActions(row.actions, row.imports)
+	}
+	return ""
 }
 
 // renderResourceTypeTable produces a table with one row per resource type,
 // aggregated across all module groups. Uses display names when available.
-func renderResourceTypeTable(ctx *BlockContext, hideEmpty bool, max int) string {
+func renderResourceTypeTable(ctx *BlockContext, columns []string, hideEmpty bool, max int) (string, error) {
 	r := currentReport(ctx)
 	if r == nil {
-		return ""
+		return "", nil
 	}
 
-	type row struct {
-		typeName  string
-		count     int
-		actions   map[core.Action]int
-		imports   int
+	cols := defaultCols(columns, summaryResourceTypeColumns)
+	if err := validateColumns("summary_table", cols, toSet(summaryResourceTypeColumns)); err != nil {
+		return "", err
 	}
-	rows := map[string]*row{}
+
+	rows := map[string]*resourceTypeRow{}
 	var order []string
 	for _, mg := range r.ModuleGroups {
 		for _, rc := range mg.Changes {
 			rr, ok := rows[rc.ResourceType]
 			if !ok {
-				rr = &row{typeName: rc.ResourceType, actions: map[core.Action]int{}}
+				rr = &resourceTypeRow{typeName: rc.ResourceType, actions: map[core.Action]int{}}
 				rows[rc.ResourceType] = rr
 				order = append(order, rc.ResourceType)
 			}
@@ -105,7 +174,6 @@ func renderResourceTypeTable(ctx *BlockContext, hideEmpty bool, max int) string 
 			}
 		}
 	}
-
 	sort.Strings(order)
 
 	kept := make([]string, 0, len(order))
@@ -124,18 +192,20 @@ func renderResourceTypeTable(ctx *BlockContext, hideEmpty bool, max int) string 
 	}
 
 	var b strings.Builder
-	b.WriteString("| Resource Type | Count | Actions |\n")
-	b.WriteString("|---------------|-------|---------|\n")
+	headings := mapSlice(cols, func(id string) string { return summaryResourceTypeHeadings[id] })
+	writeColumnHeader(&b, headings)
 	for _, t := range kept {
 		rr := rows[t]
-		name := displayName(ctx, t)
-		fmt.Fprintf(&b, "| %s (`%s`) | %d | %s |\n",
-			name, t, rr.count, describeActions(rr.actions, rr.imports))
+		b.WriteString("|")
+		for _, col := range cols {
+			fmt.Fprintf(&b, " %s |", renderResourceTypeRow(ctx, rr, col))
+		}
+		b.WriteString("\n")
 	}
 	if truncated {
 		fmt.Fprintf(&b, "\n_... %d more resource types_\n", total-max)
 	}
-	return strings.TrimRight(b.String(), "\n")
+	return strings.TrimRight(b.String(), "\n"), nil
 }
 
 // describeActions renders the Actions cell for a resource-type row. When all
@@ -188,25 +258,55 @@ func defaultSummaryGroup(ctx *BlockContext) string {
 	return "module"
 }
 
+// --- module_type grouping ---
+
+type moduleTypeRow struct {
+	typeName     string
+	description  string
+	instances    map[string]struct{}
+	total        int
+	read         int
+	actionCounts map[core.Action]int
+	maxImpact    core.Impact
+}
+
+var summaryModuleTypeColumns = []string{"module_type", "description", "instances", "resources", "actions"}
+var summaryModuleTypeHeadings = map[string]string{
+	"module_type": "Module Type",
+	"description": "Description",
+	"instances":   "Instances",
+	"resources":   "Resources",
+	"actions":     "Actions",
+}
+
+func renderModuleTypeRow(row *moduleTypeRow, col string) string {
+	switch col {
+	case "module_type":
+		return row.typeName
+	case "description":
+		if row.description == "" {
+			return "—"
+		}
+		return row.description
+	case "instances":
+		return fmt.Sprintf("%d", len(row.instances))
+	case "resources":
+		return fmt.Sprintf("%d", row.total-row.read)
+	case "actions":
+		return actionBreakdownEmoji(row.actionCounts)
+	}
+	return ""
+}
+
 // renderModuleTypeTable produces the two-level module-type summary
 // (step-summary format).
-func renderModuleTypeTable(ctx *BlockContext, hideEmpty bool, max int) string {
+func renderModuleTypeTable(ctx *BlockContext, columns []string, hideEmpty bool, max int) (string, error) {
 	r := currentReport(ctx)
 	if r == nil {
-		return ""
+		return "", nil
 	}
 
-	type row struct {
-		typeName     string
-		description  string
-		instances    map[string]struct{}
-		total        int
-		read         int
-		actionCounts map[core.Action]int
-		maxImpact    core.Impact
-	}
-
-	rowsByType := make(map[string]*row)
+	rowsByType := make(map[string]*moduleTypeRow)
 	var order []string
 
 	for _, mg := range r.ModuleGroups {
@@ -215,7 +315,7 @@ func renderModuleTypeTable(ctx *BlockContext, hideEmpty bool, max int) string {
 
 		rr, ok := rowsByType[tname]
 		if !ok {
-			rr = &row{
+			rr = &moduleTypeRow{
 				typeName:     tname,
 				instances:    map[string]struct{}{},
 				actionCounts: map[core.Action]int{},
@@ -251,7 +351,7 @@ func renderModuleTypeTable(ctx *BlockContext, hideEmpty bool, max int) string {
 		}
 	}
 
-	var rows []*row
+	var rows []*moduleTypeRow
 	for _, t := range order {
 		rr := rowsByType[t]
 		if hideEmpty && rr.total-rr.read == 0 {
@@ -276,6 +376,9 @@ func renderModuleTypeTable(ctx *BlockContext, hideEmpty bool, max int) string {
 		truncated = true
 	}
 
+	// Preserve existing behavior: when no row has a description, auto-hide
+	// the description column unless the caller explicitly asked for it.
+	explicit := len(columns) > 0
 	hasDesc := false
 	for _, rr := range rows {
 		if rr.description != "" {
@@ -284,40 +387,61 @@ func renderModuleTypeTable(ctx *BlockContext, hideEmpty bool, max int) string {
 		}
 	}
 
-	var b strings.Builder
-	if hasDesc {
-		b.WriteString("| Module Type | Description | Instances | Resources | Actions |\n")
-		b.WriteString("|-------------|-------------|-----------|-----------|--------|\n")
-	} else {
-		b.WriteString("| Module Type | Instances | Resources | Actions |\n")
-		b.WriteString("|-------------|-----------|-----------|--------|\n")
+	cols := defaultCols(columns, summaryModuleTypeColumns)
+	if err := validateColumns("summary_table", cols, toSet(summaryModuleTypeColumns)); err != nil {
+		return "", err
 	}
+	if !explicit && !hasDesc {
+		cols = removeColumn(cols, "description")
+	}
+
+	var b strings.Builder
+	headings := mapSlice(cols, func(id string) string { return summaryModuleTypeHeadings[id] })
+	writeColumnHeader(&b, headings)
 	for _, rr := range rows {
-		nonRead := rr.total - rr.read
-		actions := actionBreakdownEmoji(rr.actionCounts)
-		if hasDesc {
-			desc := rr.description
-			if desc == "" {
-				desc = "—"
-			}
-			fmt.Fprintf(&b, "| %s | %s | %d | %d | %s |\n",
-				rr.typeName, desc, len(rr.instances), nonRead, actions)
-		} else {
-			fmt.Fprintf(&b, "| %s | %d | %d | %s |\n",
-				rr.typeName, len(rr.instances), nonRead, actions)
+		b.WriteString("|")
+		for _, col := range cols {
+			fmt.Fprintf(&b, " %s |", renderModuleTypeRow(rr, col))
 		}
+		b.WriteString("\n")
 	}
 	if truncated {
 		fmt.Fprintf(&b, "\n_... %d more module types_\n", total-max)
 	}
-	return strings.TrimRight(b.String(), "\n")
+	return strings.TrimRight(b.String(), "\n"), nil
+}
+
+// --- module grouping ---
+
+var summaryModuleColumns = []string{"module", "resources", "actions"}
+var summaryModuleHeadings = map[string]string{
+	"module":    "Module",
+	"resources": "Resources",
+	"actions":   "Actions",
+}
+
+func renderModuleRow(mg core.ModuleGroup, col string) string {
+	switch col {
+	case "module":
+		return mg.Name
+	case "resources":
+		return fmt.Sprintf("%d", len(mg.Changes))
+	case "actions":
+		return actionSummaryLine(mg.ActionCounts)
+	}
+	return ""
 }
 
 // renderModuleTable produces a flat per-module table (pr-body / markdown).
-func renderModuleTable(ctx *BlockContext, hideEmpty bool, max int) string {
+func renderModuleTable(ctx *BlockContext, columns []string, hideEmpty bool, max int) (string, error) {
 	r := currentReport(ctx)
 	if r == nil {
-		return ""
+		return "", nil
+	}
+
+	cols := defaultCols(columns, summaryModuleColumns)
+	if err := validateColumns("summary_table", cols, toSet(summaryModuleColumns)); err != nil {
+		return "", err
 	}
 
 	kept := make([]core.ModuleGroup, 0, len(r.ModuleGroups))
@@ -335,24 +459,90 @@ func renderModuleTable(ctx *BlockContext, hideEmpty bool, max int) string {
 	}
 
 	var b strings.Builder
-	b.WriteString("| Module | Resources | Actions |\n")
-	b.WriteString("|--------|-----------|---------|\n")
+	headings := mapSlice(cols, func(id string) string { return summaryModuleHeadings[id] })
+	writeColumnHeader(&b, headings)
 	for _, mg := range kept {
-		fmt.Fprintf(&b, "| %s | %d | %s |\n",
-			mg.Name, len(mg.Changes), actionSummaryLine(mg.ActionCounts))
+		b.WriteString("|")
+		for _, col := range cols {
+			fmt.Fprintf(&b, " %s |", renderModuleRow(mg, col))
+		}
+		b.WriteString("\n")
 	}
 	if truncated {
 		fmt.Fprintf(&b, "\n_... %d more modules_\n", total-max)
 	}
-	return strings.TrimRight(b.String(), "\n")
+	return strings.TrimRight(b.String(), "\n"), nil
+}
+
+// --- subscription grouping ---
+
+// Target-dependent column sets: pr-comment uses compact
+// Add|Update|Delete|Replace columns; others use Resources + Impact + Actions.
+
+var summarySubscriptionDefaultColumns = []string{"subscription", "resources", "impact", "actions"}
+var summarySubscriptionPRCommentColumns = []string{"subscription", "impact", "add", "update", "delete", "replace"}
+var summarySubscriptionHeadings = map[string]string{
+	"subscription": "Subscription",
+	"resources":    "Resources",
+	"impact":       "Impact",
+	"actions":      "Actions",
+	"add":          "Add",
+	"update":       "Update",
+	"delete":       "Delete",
+	"replace":      "Replace",
+}
+
+func renderSubscriptionRow(r *core.Report, col string) string {
+	switch col {
+	case "subscription":
+		return reportLabel(r)
+	case "resources":
+		return fmt.Sprintf("%d", r.TotalResources)
+	case "impact":
+		// pr-comment shows plain "high"; other targets add emoji.
+		// We don't have ctx here; use the presence/absence decided by the
+		// subscription renderer via column choice (caller picks the column
+		// set appropriate to target).
+		return fmt.Sprintf("%s %s", core.ImpactEmoji(r.MaxImpact), r.MaxImpact)
+	case "impact_plain":
+		return string(r.MaxImpact)
+	case "actions":
+		return actionSummaryLine(r.ActionCounts)
+	case "add":
+		return fmt.Sprintf("%d", r.ActionCounts[core.ActionCreate])
+	case "update":
+		return fmt.Sprintf("%d", r.ActionCounts[core.ActionUpdate])
+	case "delete":
+		return fmt.Sprintf("%d", r.ActionCounts[core.ActionDelete])
+	case "replace":
+		return fmt.Sprintf("%d", r.ActionCounts[core.ActionReplace])
+	}
+	return ""
 }
 
 // renderSubscriptionTable produces a per-subscription cross-report table
 // (pr-body / pr-comment in multi mode).
-func renderSubscriptionTable(ctx *BlockContext, hideEmpty bool, max int) string {
+func renderSubscriptionTable(ctx *BlockContext, columns []string, hideEmpty bool, max int) (string, error) {
 	reports := allReports(ctx)
 	if len(reports) == 0 {
-		return ""
+		return "", nil
+	}
+
+	// Default column set depends on target: pr-comment uses compact matrix
+	// (add|update|delete|replace), others use Resources|Impact|Actions.
+	def := summarySubscriptionDefaultColumns
+	prComment := ctx.Target == "github-pr-comment"
+	if prComment {
+		def = summarySubscriptionPRCommentColumns
+	}
+	cols := defaultCols(columns, def)
+
+	validSet := toSet(append([]string{},
+		"subscription", "resources", "impact", "actions",
+		"add", "update", "delete", "replace",
+	))
+	if err := validateColumns("summary_table", cols, validSet); err != nil {
+		return "", err
 	}
 
 	kept := make([]*core.Report, 0, len(reports))
@@ -370,31 +560,95 @@ func renderSubscriptionTable(ctx *BlockContext, hideEmpty bool, max int) string 
 	}
 
 	var b strings.Builder
-	if ctx.Target == "github-pr-comment" {
-		b.WriteString("| Subscription | Impact | Add | Update | Delete | Replace |\n")
-		b.WriteString("|--------------|--------|-----|--------|--------|---------|\n")
-		for _, r := range kept {
-			fmt.Fprintf(&b, "| %s | %s | %d | %d | %d | %d |\n",
-				reportLabel(r), r.MaxImpact,
-				r.ActionCounts[core.ActionCreate],
-				r.ActionCounts[core.ActionUpdate],
-				r.ActionCounts[core.ActionDelete],
-				r.ActionCounts[core.ActionReplace])
+	headings := mapSlice(cols, func(id string) string { return summarySubscriptionHeadings[id] })
+	writeColumnHeader(&b, headings)
+	for _, r := range kept {
+		b.WriteString("|")
+		for _, col := range cols {
+			// pr-comment's 'impact' column traditionally rendered the plain
+			// string (no emoji). Preserve that by swapping the renderer key
+			// when we detect the pr-comment default shape.
+			rendered := ""
+			if prComment && col == "impact" {
+				rendered = renderSubscriptionRow(r, "impact_plain")
+			} else {
+				rendered = renderSubscriptionRow(r, col)
+			}
+			fmt.Fprintf(&b, " %s |", rendered)
 		}
-	} else {
-		b.WriteString("| Subscription | Resources | Impact | Actions |\n")
-		b.WriteString("|--------------|-----------|--------|---------|\n")
-		for _, r := range kept {
-			fmt.Fprintf(&b, "| %s | %d | %s %s | %s |\n",
-				reportLabel(r), r.TotalResources,
-				core.ImpactEmoji(r.MaxImpact), r.MaxImpact,
-				actionSummaryLine(r.ActionCounts))
-		}
+		b.WriteString("\n")
 	}
 	if truncated {
 		fmt.Fprintf(&b, "\n_... %d more subscriptions_\n", total-max)
 	}
-	return strings.TrimRight(b.String(), "\n")
+	return strings.TrimRight(b.String(), "\n"), nil
+}
+
+// --- small local helpers ---
+
+func toSet(keys []string) map[string]struct{} {
+	s := make(map[string]struct{}, len(keys))
+	for _, k := range keys {
+		s[k] = struct{}{}
+	}
+	return s
+}
+
+func mapSlice[T any, U any](xs []T, fn func(T) U) []U {
+	out := make([]U, len(xs))
+	for i, x := range xs {
+		out[i] = fn(x)
+	}
+	return out
+}
+
+func removeColumn(cols []string, name string) []string {
+	out := make([]string, 0, len(cols))
+	for _, c := range cols {
+		if c != name {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// Doc describes summary_table for cmd/docgen. Columns are listed flat with
+// group annotations in Description.
+func (SummaryTable) Doc() BlockDoc {
+	cols := []ColumnDoc{
+		{ID: "action", Heading: "Action", Description: "group=action: the terraform action with emoji."},
+		{ID: "actions", Heading: "Actions", Description: "group=module,module_type,resource_type,subscription: action-breakdown summary string."},
+		{ID: "add", Heading: "Add", Description: "group=subscription (pr-comment default): create count."},
+		{ID: "count", Heading: "Count", Description: "group=action,resource_type: resource count for the row."},
+		{ID: "delete", Heading: "Delete", Description: "group=subscription (pr-comment default): delete count."},
+		{ID: "description", Heading: "Description", Description: "group=module_type: team-supplied module description (auto-hidden when empty across all rows)."},
+		{ID: "impact", Heading: "Impact", Description: "group=action,subscription: natural/worst impact for the row."},
+		{ID: "instances", Heading: "Instances", Description: "group=module_type: count of distinct top-level module instances."},
+		{ID: "module", Heading: "Module", Description: "group=module: the module call name."},
+		{ID: "module_type", Heading: "Module Type", Description: "group=module_type: resolved module type from source URL."},
+		{ID: "replace", Heading: "Replace", Description: "group=subscription (pr-comment default): replace count."},
+		{ID: "resource_type", Heading: "Resource Type", Description: "group=resource_type: display name + raw type in backticks."},
+		{ID: "resources", Heading: "Resources", Description: "group=module,module_type,subscription: non-read resource count."},
+		{ID: "subscription", Heading: "Subscription", Description: "group=subscription: the report label."},
+		{ID: "update", Heading: "Update", Description: "group=subscription (pr-comment default): update count."},
+	}
+	return BlockDoc{
+		Name:    "summary_table",
+		Summary: "Top-level resource-count table with five grouping modes. Each grouping accepts its own subset of columns via the `columns` csv arg (defaults to the full column set for the grouping).",
+		Args: []ArgDoc{
+			{Name: "group", Type: "string", Default: "(target-dependent)", Description: "One of `module`, `module_type`, `subscription`, `action`, `resource_type`."},
+			{Name: "columns", Type: "csv", Default: "(full set for the grouping)", Description: "Column subset to render. Valid IDs depend on `group` — see Columns below."},
+			{Name: "hide_empty", Type: "bool", Default: "false", Description: "Drop rows with zero non-read resources."},
+			{Name: "max", Type: "int", Default: "0 (no limit)", Description: "Cap number of rows. No effect for `group=action`."},
+		},
+		Columns: cols,
+		Examples: []ExampleDoc{
+			{
+				Template: `{{ summary_table "group" "module" "columns" "module,resources" }}`,
+				Rendered: "| Module | Resources |\n|---|---|\n| vnet | 4 |\n| nsg | 3 |",
+			},
+		},
+	}
 }
 
 func init() { defaultRegistry.Register(SummaryTable{}) }

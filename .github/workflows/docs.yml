@@ -1,0 +1,45 @@
+name: Docs
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  # Required so the workflow can push the regenerated docs/blocks.md back
+  # to the PR branch. GITHUB_TOKEN is scoped to this repo only.
+  contents: write
+
+jobs:
+  regenerate:
+    name: Regenerate block reference
+    runs-on: ubuntu-latest
+    # Skip on PRs from forks — GITHUB_TOKEN has no write access to forks,
+    # and we don't want a misleading red CI line for external contributors.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Check out the PR head, not the detached merge commit, so we
+          # can push back to the PR branch.
+          ref: ${{ github.event.pull_request.head.ref }}
+          # stefanzweifel/git-auto-commit-action needs the full ref
+          # history for its diff/commit handling.
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Regenerate docs/blocks.md
+        run: make docs
+      - name: Commit regenerated docs
+        # Floating major-version ref matches the convention in
+        # test.yml and release.yml. Pin to a SHA if supply-chain
+        # tightening is desired later.
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "docs: regenerate blocks.md"
+          file_pattern: docs/blocks.md
+          # Use the github-actions bot for authorship so the commit is
+          # clearly marked as automation rather than impersonating the PR
+          # author.
+          commit_user_name: github-actions[bot]
+          commit_user_email: 41898282+github-actions[bot]@users.noreply.github.com

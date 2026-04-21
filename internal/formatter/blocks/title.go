@@ -52,4 +52,12 @@ func maxImpactAcross(reports []*core.Report) core.Impact {
 	return max
 }
 
+// Doc describes title for cmd/docgen.
+func (Title) Doc() BlockDoc {
+	return BlockDoc{
+		Name:    "title",
+		Summary: "Target-aware plan header. Zero-arg; grammar switches on ctx.Target (markdown H1, pr-body/pr-comment/step-summary each distinct).",
+	}
+}
+
 func init() { defaultRegistry.Register(Title{}) }
