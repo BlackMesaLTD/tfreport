@@ -39,11 +39,20 @@ inputs:
     description: |
       Custom metadata to attach to the rendered report, one `key: value` per
       line (YAML block syntax). Accessible in templates as
-      `{{ $r.Custom.<key> }}`. Values are literal strings — no YAML
-      escaping. Example:
+      `{{ $r.Custom.<key> }}`.
+
+      The action AUTO-INJECTS these GitHub Actions context fields — you
+      don't need to pass them yourself:
+        workflow_url, run_id, run_number, run_attempt, sha, ref_name, actor,
+        workflow, event_name, repository, server_url
+      Values you supply below override any auto-injected key with the same
+      name (last-wins).
+
+      Use this input for anything NOT in the auto-injected set. Values are
+      literal strings — no YAML escaping. Example:
         custom: |
-          workflow_url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           owner: platform-team
+          environment: prod
     required: false
   output-file:
     description: "Optional file path to persist the rendered output to. The preset always writes to a temp path regardless; use this to keep a copy at a known location."

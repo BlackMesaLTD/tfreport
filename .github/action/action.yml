@@ -37,15 +37,24 @@ inputs:
   custom:
     description: |
       Custom metadata to attach to the rendered report, one `key: value` per
-      line (YAML block syntax). Survives JSON round-trip and is accessible in
-      templates as `{{ $r.Custom.<key> }}`. Use for subscription IDs, owner
-      names, environment tags — anything that isn't derivable from the plan.
+      line (YAML block syntax). Accessible in templates as
+      `{{ $r.Custom.<key> }}`.
+
+      The action AUTO-INJECTS these GitHub Actions context fields — you don't
+      need to pass them yourself:
+        workflow_url, run_id, run_number, run_attempt, sha, ref_name, actor,
+        workflow, event_name, repository, server_url
+      Values you supply below override any auto-injected key with the same
+      name (last-wins).
+
+      Use this input for anything NOT in the auto-injected set — typically
+      subscription IDs, owner names, environment tags, matrix values.
 
       Values are treated as LITERAL STRINGS. Do not wrap in quotes — quotes
       are preserved in the value. Multi-line values and YAML escape sequences
       are not supported. Example:
         custom: |
-          workflow_url: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          sub_id: 00000000-0000-0000-0000-000000000001
           owner: platform-team
     required: false
   output-file:
