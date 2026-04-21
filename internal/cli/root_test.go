@@ -29,6 +29,73 @@ func TestReadPlanJSONMissingFile(t *testing.T) {
 	}
 }
 
+func TestParseCustomFlags(t *testing.T) {
+	t.Run("empty", func(t *testing.T) {
+		got, err := parseCustomFlags(nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != nil {
+			t.Errorf("empty input should return nil, got %v", got)
+		}
+	})
+
+	t.Run("simple pair", func(t *testing.T) {
+		got, err := parseCustomFlags([]string{"owner=platform-team"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got["owner"] != "platform-team" {
+			t.Errorf("got %v", got)
+		}
+	})
+
+	t.Run("value with equals", func(t *testing.T) {
+		// Only the first = splits; extra = stay in the value.
+		got, err := parseCustomFlags([]string{"formula=a=b=c"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got["formula"] != "a=b=c" {
+			t.Errorf("got %q", got["formula"])
+		}
+	})
+
+	t.Run("repeated keys — last wins", func(t *testing.T) {
+		got, err := parseCustomFlags([]string{"k=1", "k=2"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got["k"] != "2" {
+			t.Errorf("last-wins failed: %v", got)
+		}
+	})
+
+	t.Run("missing equals", func(t *testing.T) {
+		_, err := parseCustomFlags([]string{"bogus"})
+		if err == nil {
+			t.Fatal("expected error for missing equals")
+		}
+	})
+
+	t.Run("empty key", func(t *testing.T) {
+		_, err := parseCustomFlags([]string{"=value"})
+		if err == nil {
+			t.Fatal("expected error for empty key")
+		}
+	})
+
+	t.Run("whitespace-trimmed key", func(t *testing.T) {
+		got, err := parseCustomFlags([]string{"  owner  =value"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := got["owner"]; !ok {
+			t.Errorf("expected trimmed key 'owner', got %v", got)
+		}
+	})
+}
+
 func TestExecuteWithFile(t *testing.T) {
 	// Create a temp file with valid JSON
 	f, err := os.CreateTemp("", "plan-*.json")

@@ -199,6 +199,11 @@ Variants: pass `plan-file` (+ optional `text-plan-file`) instead of `plan` if yo
     text-plan-file: ./subscriptions/${{ matrix.subscription }}/plan.show.txt
     label: ${{ matrix.subscription }}
     config: .tfreport.yml
+    # Optional: attach per-sub metadata that downstream templates can read
+    # as {{ $r.Custom.<key> }} (e.g. subscription GUID, plan-workflow run ID).
+    custom: |
+      sub_id: ${{ matrix.ID }}
+      run_id: ${{ github.run_id }}
 ```
 
 Default artifact name is `tfreport-<label>` (override with `artifact-name`).
@@ -258,6 +263,8 @@ Flags:
       --text-plan-file string    path to terraform text plan output (from `terraform show -no-color plan.out`)
       --report-file strings      read previously exported tfreport JSON (repeatable for multi-report aggregation)
       --label string             subscription/environment label (stored in JSON export)
+      --custom key=value         arbitrary metadata stored on the report (repeatable).
+                                 Accessible in templates as {{ $r.Custom.<key> }} and survives JSON round-trip.
   -c, --config string            path to .tfreport.yml config file
       --changed-only             show only changed resources (exclude no-ops)
   -q, --quiet                    suppress non-essential output

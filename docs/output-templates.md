@@ -716,7 +716,50 @@ MaxImpact      Impact                // "critical" | "high" | "medium" | "low" |
 ModuleSources  map[string]string     // top-level module call → source URL
 TextPlanBlocks map[string]string     // address → native text plan block
 DisplayNames   map[string]string     // resource_type → human name
+Custom         map[string]string     // user-supplied metadata (see `--custom` below)
 ```
+
+### `.Custom` — user-supplied metadata
+
+Arbitrary key/value metadata attached to a report at preparation time, accessible in templates as `{{ $r.Custom.<key> }}`. Populated via the CLI flag `--custom key=value` (repeatable) or via the `prepare` composite action's `custom:` input (YAML `key: value` block). Survives JSON round-trip, so a plan workflow can attach context (subscription ID, owner, plan-workflow run ID, environment tag) that a downstream reporter consumes.
+
+**CLI:**
+
+```bash
+tfreport --plan-file plan.json --target json \
+  --label sub-alpha \
+  --custom sub_id=00000000-0000-0000-0000-000000000001 \
+  --custom run_id=$GITHUB_RUN_ID \
+  --custom owner=platform-team
+```
+
+**Composite action:**
+
+```yaml
+- uses: BlackMesaLTD/tfreport/.github/action/prepare@v0.0.5
+  with:
+    plan-file: ./plan.show.json
+    label: sub-alpha
+    custom: |
+      sub_id: ${{ matrix.ID }}
+      run_id: ${{ github.run_id }}
+      owner: platform-team
+```
+
+**Template access:**
+
+```tmpl
+{{ range $r := .Reports }}
+- [ ] {{ $r.Label }} — `{{ index $r.Custom "sub_id" | default "—" }}` —
+  [Summary]({{ env "GITHUB_SERVER_URL" }}/{{ env "GITHUB_REPOSITORY" }}/actions/runs/{{ index $r.Custom "run_id" }})
+{{ end }}
+```
+
+**Key syntax:** keys are user-defined strings. Dot access (`{{ $r.Custom.sub_id }}`) works for keys that are valid Go identifiers; keys with hyphens, dots, or other special chars need `{{ index $r.Custom "some-key" }}`. Missing keys return empty string, so pipe through Sprig's `default` helper when you want a fallback.
+
+**Not supported:**
+- Multi-report mode (`tfreport --report-file x --report-file y --custom …`) errors — custom metadata is per-report and must be set at prepare time.
+- Nested values — values are plain strings. If you need structure, encode as JSON and `fromJson` in the template.
 
 **`core.ResourceChange` fields** (iterated via `$mg.Changes`):
 

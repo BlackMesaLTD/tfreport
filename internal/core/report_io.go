@@ -14,6 +14,7 @@ type reportJSON struct {
 	ModuleSources  map[string]string `json:"module_sources,omitempty"`
 	TextPlanBlocks map[string]string `json:"text_plan_blocks,omitempty"`
 	DisplayNames   map[string]string `json:"display_names,omitempty"`
+	Custom         map[string]string `json:"custom,omitempty"`
 }
 
 type keyChangeJSON struct {
@@ -57,6 +58,7 @@ func MarshalReport(r *Report) ([]byte, error) {
 		ModuleSources:  r.ModuleSources,
 		TextPlanBlocks: r.TextPlanBlocks,
 		DisplayNames:   r.DisplayNames,
+		Custom:         r.Custom,
 		ModuleGroups:   make([]moduleGroupJSON, len(r.ModuleGroups)),
 	}
 
@@ -93,6 +95,7 @@ func UnmarshalReport(data []byte) (*Report, error) {
 		ModuleSources:  jr.ModuleSources,
 		TextPlanBlocks: jr.TextPlanBlocks,
 		DisplayNames:   jr.DisplayNames,
+		Custom:         jr.Custom,
 		ModuleGroups:   make([]ModuleGroup, len(jr.ModuleGroups)),
 	}
 

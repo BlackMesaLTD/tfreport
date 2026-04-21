@@ -33,6 +33,17 @@ inputs:
     description: "Export only changed resources"
     required: false
     default: "true"
+  custom:
+    description: |
+      Custom metadata to attach to the exported report, one `key: value` per
+      line (YAML block syntax). Survives JSON round-trip and is accessible in
+      templates as `{{ $r.Custom.<key> }}`. Use this for subscription IDs,
+      owner names, environment tags — anything that isn't derivable from the
+      plan itself. Example:
+        custom: |
+          sub_id: ${{ matrix.ID }}
+          owner: platform-team
+    required: false
   artifact-name:
     description: "Name of the uploaded artifact. Defaults to tfreport-<label>."
     required: false
@@ -124,6 +135,7 @@ runs:
         INPUT_CONFIG: ${{ inputs.config }}
         INPUT_CHANGED_ONLY: ${{ inputs.changed-only }}
         INPUT_ARTIFACT_NAME: ${{ inputs.artifact-name }}
+        INPUT_CUSTOM: ${{ inputs.custom }}
       run: |
         if [ -z "$INPUT_LABEL" ]; then
           echo "::error::tfreport-prepare: 'label' is required"
@@ -152,6 +164,36 @@ runs:
         fi
         if [ "$INPUT_CHANGED_ONLY" = "true" ]; then
           ARGS+=(--changed-only)
+        fi
+
+        # Parse `key: value` lines (YAML-block input) into repeated --custom
+        # flags. Blank lines and `#` comments skipped. Only the first `:`
+        # splits each line, so values may contain colons.
+        if [ -n "$INPUT_CUSTOM" ]; then
+          while IFS= read -r line; do
+            line="${line%%#*}"
+            line="${line#"${line%%[![:space:]]*}"}"
+            line="${line%"${line##*[![:space:]]}"}"
+            [ -z "$line" ] && continue
+            case "$line" in
+              *:*) ;;
+              *)
+                echo "::error::tfreport-prepare: 'custom' line missing ':' — $line"
+                exit 1
+                ;;
+            esac
+            key="${line%%:*}"
+            value="${line#*:}"
+            key="${key#"${key%%[![:space:]]*}"}"
+            key="${key%"${key##*[![:space:]]}"}"
+            value="${value#"${value%%[![:space:]]*}"}"
+            value="${value%"${value##*[![:space:]]}"}"
+            if [ -z "$key" ]; then
+              echo "::error::tfreport-prepare: 'custom' line has empty key — $line"
+              exit 1
+            fi
+            ARGS+=(--custom "${key}=${value}")
+          done <<< "$INPUT_CUSTOM"
         fi
 
         tfreport "${ARGS[@]}" > "$REPORT_FILE"

@@ -29,6 +29,7 @@ var (
 	flagTextPlanFile string
 	flagReportFiles  []string
 	flagLabel        string
+	flagCustom       []string
 	flagChangedOnly  bool
 	flagQuiet        bool
 )
@@ -67,6 +68,7 @@ func init() {
 	rootCmd.Flags().StringVar(&flagTextPlanFile, "text-plan-file", "", "path to terraform text plan output (terraform show -no-color plan.out)")
 	rootCmd.Flags().StringSliceVar(&flagReportFiles, "report-file", nil, "read previously exported tfreport JSON (repeatable for multi-report aggregation)")
 	rootCmd.Flags().StringVar(&flagLabel, "label", "", "subscription/environment label (stored in JSON export)")
+	rootCmd.Flags().StringArrayVar(&flagCustom, "custom", nil, "custom key=value metadata (repeatable). Accessible in templates as {{ $r.Custom.<key> }}")
 	rootCmd.Flags().BoolVar(&flagChangedOnly, "changed-only", false, "show only changed resources (exclude no-ops)")
 	rootCmd.Flags().BoolVarP(&flagQuiet, "quiet", "q", false, "suppress non-essential output")
 }
@@ -89,6 +91,9 @@ func run(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(flagReportFiles) > 1 {
+		if len(flagCustom) > 0 {
+			return fmt.Errorf("--custom is not supported in multi-report mode; set custom metadata per report at prepare time (when the plan JSON is first ingested)")
+		}
 		return runMultiReport(cfg, configDir, flagReportFiles, flagTarget)
 	}
 
@@ -103,6 +108,20 @@ func run(cmd *cobra.Command, args []string) error {
 	}
 	if err != nil {
 		return err
+	}
+
+	custom, err := parseCustomFlags(flagCustom)
+	if err != nil {
+		return err
+	}
+	if len(custom) > 0 {
+		if report.Custom == nil {
+			report.Custom = custom
+		} else {
+			for k, v := range custom {
+				report.Custom[k] = v
+			}
+		}
 	}
 
 	moduleTypeDescriptions, err := loadModuleTypeDescriptions(cfg)
@@ -276,6 +295,29 @@ func resolveTemplatePath(configDir, relPath string) (string, error) {
 		return "", fmt.Errorf("template_file: path escapes config directory: %q", relPath)
 	}
 	return joined, nil
+}
+
+// parseCustomFlags converts a slice of "key=value" strings from the
+// --custom flag into a map. Empty input returns nil. Entries without an
+// `=` return a helpful error naming the offending entry; empty keys are
+// rejected. Later occurrences of the same key overwrite earlier ones.
+func parseCustomFlags(entries []string) (map[string]string, error) {
+	if len(entries) == 0 {
+		return nil, nil
+	}
+	out := make(map[string]string, len(entries))
+	for _, entry := range entries {
+		eq := strings.IndexByte(entry, '=')
+		if eq < 0 {
+			return nil, fmt.Errorf("--custom %q: expected key=value", entry)
+		}
+		key := strings.TrimSpace(entry[:eq])
+		if key == "" {
+			return nil, fmt.Errorf("--custom %q: key must not be empty", entry)
+		}
+		out[key] = entry[eq+1:]
+	}
+	return out, nil
 }
 
 func outputOptions(out config.OutputConfig) blocks.OutputOptions {

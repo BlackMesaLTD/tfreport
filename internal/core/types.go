@@ -97,4 +97,13 @@ type Report struct {
 	ModuleSources  map[string]string // top-level module call name → source URL
 	TextPlanBlocks map[string]string // resource address → native terraform text block
 	DisplayNames   map[string]string // resource type → human-readable display name
+
+	// Custom is a pass-through bag for user-supplied metadata that
+	// accompanies a report from generation time through to template
+	// rendering. Populated via `--custom key=value` on the CLI (repeatable).
+	// Survives JSON round-trip via MarshalReport / UnmarshalReport.
+	// Templates access values via `{{ $r.Custom.<key> }}` (Go's template
+	// engine resolves map keys with dot syntax); keys with hyphens or
+	// other special characters need `{{ index $r.Custom "some-key" }}`.
+	Custom map[string]string
 }
