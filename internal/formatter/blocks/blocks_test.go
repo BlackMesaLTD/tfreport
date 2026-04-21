@@ -66,6 +66,107 @@ func TestPlanCounts(t *testing.T) {
 	}
 }
 
+// TestPlanCounts_explicitReport confirms the `report` arg overrides the
+// ctx-default report selection — essential for `range $r := .Reports` usage.
+func TestPlanCounts_explicitReport(t *testing.T) {
+	// Two differently-shaped reports in ctx.Reports. Without explicit arg,
+	// currentReport() returns the first. With arg, caller's choice wins.
+	r1 := &core.Report{
+		TotalResources: 3,
+		ActionCounts: map[core.Action]int{
+			core.ActionCreate: 1, core.ActionUpdate: 2,
+		},
+	}
+	r2 := &core.Report{
+		TotalResources: 5,
+		ActionCounts: map[core.Action]int{
+			core.ActionDelete: 5,
+		},
+	}
+	ctx := &BlockContext{Target: "markdown", Reports: []*core.Report{r1, r2}}
+
+	// Default → first report.
+	out, err := PlanCounts{}.Render(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "1 to add") || !strings.Contains(out, "2 to change") {
+		t.Errorf("default: wanted r1 counts, got %q", out)
+	}
+
+	// Explicit r2 → second report.
+	out, err = PlanCounts{}.Render(ctx, map[string]any{"report": r2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "5 to destroy") {
+		t.Errorf("explicit r2: wanted r2 counts, got %q", out)
+	}
+	if strings.Contains(out, "to add") || strings.Contains(out, "to change") {
+		t.Errorf("explicit r2 should not show r1 counts, got %q", out)
+	}
+}
+
+func TestPlanCounts_includeImports(t *testing.T) {
+	r := &core.Report{
+		TotalResources: 2,
+		ActionCounts:   map[core.Action]int{core.ActionUpdate: 2},
+		ModuleGroups: []core.ModuleGroup{
+			{Changes: []core.ResourceChange{
+				{Address: "a", Action: core.ActionUpdate, IsImport: true},
+				{Address: "b", Action: core.ActionUpdate, IsImport: true},
+				{Address: "c", Action: core.ActionUpdate}, // not imported
+			}},
+		},
+	}
+	ctx := &BlockContext{Target: "markdown", Report: r}
+
+	// Default: no imports suffix.
+	out, err := PlanCounts{}.Render(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "imported") {
+		t.Errorf("default should omit imports, got %q", out)
+	}
+
+	// include_imports=true: "2 imported" appended.
+	out, err = PlanCounts{}.Render(ctx, map[string]any{"include_imports": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "2 imported") {
+		t.Errorf("include_imports=true should append '2 imported', got %q", out)
+	}
+}
+
+func TestPlanCounts_includeImportsWithZeroImports(t *testing.T) {
+	// include_imports=true but no imports in report: suffix omitted.
+	r := &core.Report{
+		TotalResources: 1,
+		ActionCounts:   map[core.Action]int{core.ActionCreate: 1},
+		ModuleGroups: []core.ModuleGroup{
+			{Changes: []core.ResourceChange{{Address: "a", Action: core.ActionCreate}}},
+		},
+	}
+	ctx := &BlockContext{Target: "markdown", Report: r}
+	out, err := PlanCounts{}.Render(ctx, map[string]any{"include_imports": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "imported") {
+		t.Errorf("zero imports should omit suffix, got %q", out)
+	}
+}
+
+func TestPlanCounts_wrongReportType(t *testing.T) {
+	ctx := &BlockContext{Target: "markdown"}
+	_, err := PlanCounts{}.Render(ctx, map[string]any{"report": "not a pointer"})
+	if err == nil {
+		t.Fatal("expected error for non-pointer report")
+	}
+}
+
 func TestKeyChanges_empty(t *testing.T) {
 	ctx := &BlockContext{Target: "markdown", Report: &core.Report{}}
 	out, err := KeyChanges{}.Render(ctx, nil)

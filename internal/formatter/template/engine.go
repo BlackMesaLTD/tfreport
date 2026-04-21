@@ -145,6 +145,31 @@ func (e *Engine) buildFuncMap(ctx *blocks.BlockContext) template.FuncMap {
 	funcs["resource_label"] = func(rc core.ResourceChange) string { return core.ResourceDisplayLabel(rc) }
 	funcs["module_type"] = func(mg core.ModuleGroup, r *core.Report) string { return core.ModuleTypeForGroup(mg, r) }
 
+	// worst_impact returns the highest-severity impact for a module group,
+	// useful inside `{{ range $mg := $r.ModuleGroups }}` where the built-in
+	// modules_table `impact` column isn't directly reusable. Returns an
+	// empty Impact for groups with no classified changes.
+	funcs["worst_impact"] = func(mg core.ModuleGroup) core.Impact {
+		return core.MaxImpactForGroup(mg)
+	}
+
+	// worst_action returns the highest-severity action present in the supplied
+	// action counts (replace > delete > update > create > read). Returns an
+	// empty string when every count is zero. Accepts `$r.ActionCounts` or
+	// `$mg.ActionCounts`.
+	funcs["worst_action"] = func(counts map[core.Action]int) string {
+		order := []core.Action{
+			core.ActionReplace, core.ActionDelete, core.ActionUpdate,
+			core.ActionCreate, core.ActionRead,
+		}
+		for _, a := range order {
+			if counts[a] > 0 {
+				return string(a)
+			}
+		}
+		return ""
+	}
+
 	// Predicate helpers that stringify their args, so users can write
 	// `{{ if impact_is "critical" $rc.Impact }}` without the
 	// `(printf "%s" $rc.Impact)` dance that pure {{ eq }} requires.
