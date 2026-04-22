@@ -481,6 +481,98 @@ the template uses came from the prepare step's `custom:` input.
 
 ---
 
+## Matrix deploy checklist with state preservation
+
+**Who:** same change-control reviewer as above, but on a multi-day PR
+where new commits keep pushing fresh renders and wiping the reviewer's
+ticks.
+
+**Pain:** every new commit regenerates the PR body, and the `- [ ]`
+line goes back to empty — the reviewer has to re-tick on every push.
+
+**Fix:** swap the raw `- [ ]` for the `preserve` template helper. Ticks
+survive re-renders because the reconciler keys off a stable `id` — order
+changes and new subscriptions don't lose state.
+
+**The template** (diff from the recipe above):
+
+```yaml
+output:
+  targets:
+    github-pr-body:
+      template: |
+        <!-- BEGIN_SUB_SUMMARY -->
+        {{- range $r := .Reports }}
+        {{- $subID       := index $r.Custom "sub_id"       | default "—" -}}
+        {{- $workflowURL := index $r.Custom "workflow_url" | default "" -}}
+        {{- $label       := $r.Label | default "default" }}
+        - {{ preserve (printf "deploy:%s" $subID) "checkbox" }} {{ $label }} - `{{ $subID }}` ~ {{ if $workflowURL -}}
+          [**Summary:**]({{ $workflowURL }})
+        {{- else -}}
+          **Summary:**
+        {{- end }} `{{ $r.MaxImpact }}`
+        {{- end }}
+        <!-- END_SUB_SUMMARY -->
+```
+
+Only the checkbox cell lives inside the preserve region — the
+workflow-URL tail is generator-owned and refreshes on every render.
+
+**CI wiring** — one extra step per job: fetch the current PR body and
+pass it to tfreport via `--previous-body-file`:
+
+```yaml
+- name: Fetch prior PR body
+  run: |
+    python3 scripts/gh_api.py --fetch-body \
+      --github-token ${{ secrets.GITHUB_TOKEN }} \
+      --output old-body.md
+
+- uses: BlackMesaLTD/tfreport/.github/action@main
+  with:
+    plan-file: plan.json
+    previous-body-file: old-body.md   # ← the new line
+    target: github-pr-body
+    output-file: new-snippet.md
+
+- uses: BlackMesaLTD/tfreport/.github/action/send@main
+  with:
+    content-file: new-snippet.md
+    pr-body-marker: SUB_SUMMARY
+    github-token: ${{ secrets.GITHUB_TOKEN }}
+```
+
+**Note — don't confuse the two `preserve`s:**
+
+- `preserve` (template helper) — shown above, wraps a state-preserving
+  region. This is the state-preservation primitive.
+- `--preserve` (CLI flag) — documented further down in this file,
+  opt-in allowlist for preserving raw attribute values on serialised
+  reports. Unrelated feature, same word.
+
+See [docs/state-preservation.md](./state-preservation.md) for the full
+primitive: all four kinds (`checkbox`, `radio`, `text`, `block`), the
+`preserve_begin` / `preserve_end` paired form, the `prior` escape hatch,
+and the `output.preserve_strict` config knob.
+
+**Alternative — built-in `deploy_checklist preserve="true"`**:
+
+```yaml
+output:
+  targets:
+    github-pr-body:
+      template: |
+        {{ .Title }}
+        {{ deploy_checklist "preserve" true }}
+```
+
+Shorter, but gives up the workflow-URL tail and per-sub details
+formatting shown in the recipe above. Use the hand-rolled form when you
+need custom grammar; use `deploy_checklist preserve="true"` when you
+don't.
+
+---
+
 ## Where to go next
 
 All of the above templates fall into one of three zones:

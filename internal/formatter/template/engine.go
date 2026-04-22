@@ -16,6 +16,7 @@ package template
 import (
 	"bytes"
 	"fmt"
+	"maps"
 	"reflect"
 	"strings"
 	"text/template"
@@ -179,6 +180,11 @@ func (e *Engine) buildFuncMap(ctx *blocks.BlockContext) template.FuncMap {
 	// sample returns the first n items of a slice. Uses reflection so it
 	// accepts any []T. Returns the original slice when n >= length.
 	funcs["sample"] = sampleFn
+
+	// State-preservation helpers: preserve / preserve_begin / preserve_end /
+	// prior / has_prior. Bound to the current ctx so prior/has_prior can
+	// consult the parsed --previous-body-file regions.
+	maps.Copy(funcs, preserveFuncs(ctx))
 
 	// Typo-safe action counters. action_count aggregates across all reports
 	// (single or multi). import_count tallies IsImport=true resources.

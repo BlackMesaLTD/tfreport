@@ -14,6 +14,7 @@ import (
 	"sync"
 
 	"github.com/BlackMesaLTD/tfreport/internal/core"
+	"github.com/BlackMesaLTD/tfreport/internal/preserve"
 )
 
 // BlockContext carries the shared state needed to render any block. One
@@ -68,6 +69,13 @@ type BlockContext struct {
 	// ConfigDir is the directory of the resolved .tfreport.yml. Used by
 	// {{ include }} to sandbox relative paths.
 	ConfigDir string
+
+	// PriorRegions holds the parsed preserve regions from the previous
+	// rendered body, keyed by id. Populated by the CLI when
+	// --previous-body-file is set. nil means no prior body was supplied —
+	// blocks like deploy_checklist use this to silently downgrade an
+	// opt-in `preserve="true"` arg to a no-op for one-off local renders.
+	PriorRegions map[string]preserve.Region
 }
 
 // OutputOptions mirrors the subset of config.OutputConfig that blocks consult

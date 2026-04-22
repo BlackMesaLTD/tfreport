@@ -39,7 +39,13 @@ type OutputConfig struct {
 	CodeFormat            string                  `yaml:"code_format"`
 	ChangedAttrsDisplay   string                  `yaml:"changed_attrs_display"`
 	PreserveAttributes    []string                `yaml:"preserve_attributes"`
-	Targets               map[string]TargetConfig `yaml:"targets"`
+	// PreserveStrict controls how tfreport reacts when the body supplied via
+	// --previous-body-file contains malformed preserve markers. Default false:
+	// emit a ::warning:: to stderr, skip reconciliation, and render as if no
+	// prior body was supplied. True: hard-fail with exit 1 so CI can gate on
+	// corruption.
+	PreserveStrict bool                    `yaml:"preserve_strict"`
+	Targets        map[string]TargetConfig `yaml:"targets"`
 }
 
 // TargetConfig overrides the output template or section visibility for a

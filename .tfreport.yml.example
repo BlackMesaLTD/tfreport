@@ -118,3 +118,36 @@ output:
   # targets:
   #   github-step-summary:
   #     template_file: ./.tfreport/step-summary.tmpl
+
+  # State preservation: when template helpers (`preserve`, `preserve_begin`,
+  # `preserve_end`) are used, tfreport's CLI post-render pass merges the
+  # prior body supplied via `--previous-body-file`. If that body contains
+  # malformed markers the default is a ::warning:: on stderr plus a normal
+  # render (no preservation). Set preserve_strict to true to hard-fail CI
+  # when the prior body is corrupt.
+  #
+  # preserve_strict: false
+  #
+  # Example template using the `preserve` helper so a change-control tick
+  # survives PR pushes. The `{{ preserve }}` call wraps only the checkbox
+  # cell — the workflow URL tail still refreshes on every render.
+  #
+  # targets:
+  #   github-pr-body:
+  #     template: |
+  #       {{- range $r := .Reports }}
+  #       {{- $subID       := index $r.Custom "sub_id"       | default "—" -}}
+  #       {{- $workflowURL := index $r.Custom "workflow_url" | default "" -}}
+  #       {{- $label       := $r.Label | default "default" }}
+  #       - {{ preserve (printf "deploy:%s" $subID) "checkbox" }} {{ $label }} - `{{ $subID }}` ~ {{ if $workflowURL }}[**Summary:**]({{ $workflowURL }}){{ else }}**Summary:**{{ end }} `{{ $r.MaxImpact }}`
+  #       {{ end }}
+  #
+  # Alternative: use the built-in deploy_checklist block with preserve=true.
+  # The id is auto-derived from `deploy:<slugified label>`.
+  #
+  # targets:
+  #   github-pr-body:
+  #     template: |
+  #       {{ .Title }}
+  #
+  #       {{ deploy_checklist "preserve" true }}

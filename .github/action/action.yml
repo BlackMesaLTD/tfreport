@@ -80,6 +80,19 @@ inputs:
   output-file:
     description: "Optional file path to write the rendered output to. Use this for renders likely to exceed ~1 MB (step-summary of large plans)."
     required: false
+  previous-body-file:
+    description: |
+      Optional path to the previously-rendered body (e.g. a PR body fetched
+      via `python3 scripts/gh_api.py --fetch-body`). When set, tfreport's
+      state-preservation regions carry their prior contents forward — ticked
+      checkboxes, picked radio options, free-text notes survive PR pushes.
+
+      Unset / empty means no preservation (plain render, regions emit
+      defaults if the template uses preserve helpers).
+
+      See docs/state-preservation.md for the full wire protocol.
+    required: false
+    default: ""
 
 outputs:
   report:
@@ -145,6 +158,7 @@ runs:
         INPUT_CUSTOM: ${{ inputs.custom }}
         INPUT_PRESERVE: ${{ inputs.preserve_attributes }}
         INPUT_OUTPUT_FILE: ${{ inputs.output-file }}
+        INPUT_PREVIOUS_BODY_FILE: ${{ inputs.previous-body-file }}
       run: |
         ARGS=(--plan-file "$TFREPORT_PLAN_FILE" --target "$INPUT_TARGET")
         if [ -n "${TFREPORT_TEXT_PLAN_FILE:-}" ]; then
@@ -158,6 +172,9 @@ runs:
         fi
         if [ "$INPUT_CHANGED_ONLY" = "true" ]; then
           ARGS+=(--changed-only)
+        fi
+        if [ -n "$INPUT_PREVIOUS_BODY_FILE" ]; then
+          ARGS+=(--previous-body-file "$INPUT_PREVIOUS_BODY_FILE")
         fi
 
         # Translate the YAML-block `custom:` input into repeated --custom flags.

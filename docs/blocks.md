@@ -105,6 +105,7 @@ GitHub task-list checkboxes, one per report. Degenerates to a single item in sin
 | Name | Type | Default | Description |
 |------|------|---------|-------------|
 | `columns` | `csv` | subscription,impact,actions | Columns rendered per checklist line. Order is preserved; separators adapt to column identity. |
+| `preserve` | `bool` | false | Wrap each row's checkbox in a preserve region so ticks survive PR re-renders. Id is `deploy:<slugified label>`. Silently downgrades to false when tfreport is invoked without `--previous-body-file`. See docs/state-preservation.md. |
 
 **Columns** (for the `columns` csv arg):
 

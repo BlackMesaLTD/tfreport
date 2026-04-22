@@ -12,6 +12,7 @@ Transform Terraform plans into human-readable reports for CI/CD pipelines.
 - **Attribute-level impact** — global and per-resource-type overrides (e.g., tags = none)
 - **Preset generator** — `presetgen` tool parses provider docs to generate enriched presets
 - **Team config** — `.tfreport.yml` for module descriptions, attribute overrides, impact rules
+- **State preservation** — checkboxes, radio selections, and free-text notes survive PR re-renders ([docs](docs/state-preservation.md))
 - **Single binary** — zero runtime dependencies, installs in seconds
 
 ## Quick Start
@@ -265,6 +266,9 @@ Flags:
       --label string             subscription/environment label (stored in JSON export)
       --custom key=value         arbitrary metadata stored on the report (repeatable).
                                  Accessible in templates as {{ $r.Custom.<key> }} and survives JSON round-trip.
+      --previous-body-file path  previously-rendered body (e.g. fetched PR body).
+                                 When set, preserve regions carry prior content forward.
+                                 Use `-` for stdin. See docs/state-preservation.md.
   -c, --config string            path to .tfreport.yml config file
       --changed-only             show only changed resources (exclude no-ops)
   -q, --quiet                    suppress non-essential output
