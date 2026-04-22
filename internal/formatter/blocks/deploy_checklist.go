@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/BlackMesaLTD/tfreport/internal/core"
+	"github.com/BlackMesaLTD/tfreport/internal/preserve"
 )
 
 // DeployChecklist renders a GitHub task-list — one checkbox per report.
@@ -19,6 +20,13 @@ import (
 //	      impact       — r.MaxImpact
 //	      actions      — action-summary line ("1 create, 2 update, 1 delete")
 //	      key_changes_count — number of key_changes entries
+//
+//	preserve bool (default false)
+//	    Opt-in: wrap each row's checkbox in a preserve region so ticks
+//	    survive PR re-renders. Id derived from the report label via
+//	    preserve.SlugifyID, namespaced as `deploy:<slug>`. Auto-downgraded
+//	    to false when ctx.PriorRegions is nil (no --previous-body-file
+//	    supplied) to avoid comment-marker cruft in one-off renders.
 type DeployChecklist struct{}
 
 func (DeployChecklist) Name() string { return "deploy_checklist" }
@@ -42,10 +50,32 @@ func (DeployChecklist) Render(ctx *BlockContext, args map[string]any) (string, e
 		return "", nil
 	}
 
+	// Preservation is opt-in. When enabled but no prior body was supplied
+	// (ctx.PriorRegions is nil), silently fall back to the raw-[ ] emission —
+	// avoids cruft from markers that will never get reconciled.
+	preserveOn := ArgBool(args, "preserve", false) && ctx.PriorRegions != nil
+
 	var b strings.Builder
 	b.WriteString("### Deploy Checklist\n")
 	for _, r := range reports {
-		b.WriteString("- [ ] ")
+		b.WriteString("- ")
+		if preserveOn {
+			id := "deploy:" + preserve.SlugifyID(reportLabel(r))
+			begin, err := preserve.RenderBegin(id, "checkbox", nil)
+			if err != nil {
+				return "", fmt.Errorf("deploy_checklist: %w", err)
+			}
+			end, err := preserve.RenderEnd(id)
+			if err != nil {
+				return "", fmt.Errorf("deploy_checklist: %w", err)
+			}
+			b.WriteString(begin)
+			b.WriteString("[ ]")
+			b.WriteString(end)
+			b.WriteString(" ")
+		} else {
+			b.WriteString("[ ] ")
+		}
 		for i, col := range cols {
 			if i > 0 {
 				b.WriteString(deployChecklistSeparator(col))
@@ -91,6 +121,7 @@ func (DeployChecklist) Doc() BlockDoc {
 		Summary: "GitHub task-list checkboxes, one per report. Degenerates to a single item in single-report mode.",
 		Args: []ArgDoc{
 			{Name: "columns", Type: "csv", Default: "subscription,impact,actions", Description: "Columns rendered per checklist line. Order is preserved; separators adapt to column identity."},
+			{Name: "preserve", Type: "bool", Default: "false", Description: "Wrap each row's checkbox in a preserve region so ticks survive PR re-renders. Id is `deploy:<slugified label>`. Silently downgrades to false when tfreport is invoked without `--previous-body-file`. See docs/state-preservation.md."},
 		},
 		Columns: []ColumnDoc{
 			{ID: "subscription", Heading: "Subscription", Description: "Report label (or `default`) in bold."},

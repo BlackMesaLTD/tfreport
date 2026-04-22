@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/BlackMesaLTD/tfreport/internal/core"
+	"github.com/BlackMesaLTD/tfreport/internal/preserve"
 )
 
 // syntheticReport builds a Report with the supplied module groups for use
@@ -1361,6 +1362,68 @@ func TestDeployChecklist_unknownColumn(t *testing.T) {
 	}, map[string]any{"columns": "bogus"})
 	if err == nil {
 		t.Fatal("expected error for unknown column")
+	}
+}
+
+func TestDeployChecklist_preserveFalseByDefault(t *testing.T) {
+	out, err := DeployChecklist{}.Render(&BlockContext{
+		Target:  "github-pr-body",
+		Reports: []*core.Report{{Label: "sub-a", MaxImpact: core.ImpactHigh, ActionCounts: map[core.Action]int{core.ActionCreate: 1}}},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "tfreport:preserve-begin") {
+		t.Errorf("preserve=false (default) should NOT emit markers, got:\n%s", out)
+	}
+}
+
+func TestDeployChecklist_preserveRequiresPriorRegions(t *testing.T) {
+	// preserve=true but PriorRegions nil → silently downgrade to no markers.
+	out, err := DeployChecklist{}.Render(&BlockContext{
+		Target:       "github-pr-body",
+		Reports:      []*core.Report{{Label: "sub-a", MaxImpact: core.ImpactHigh, ActionCounts: map[core.Action]int{core.ActionCreate: 1}}},
+		PriorRegions: nil,
+	}, map[string]any{"preserve": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "tfreport:preserve-begin") {
+		t.Errorf("preserve=true + nil PriorRegions should NOT emit markers, got:\n%s", out)
+	}
+}
+
+func TestDeployChecklist_preserveEmitsMarkers(t *testing.T) {
+	out, err := DeployChecklist{}.Render(&BlockContext{
+		Target:       "github-pr-body",
+		Reports:      []*core.Report{{Label: "sub-a", MaxImpact: core.ImpactHigh, ActionCounts: map[core.Action]int{core.ActionCreate: 1}}},
+		PriorRegions: map[string]preserve.Region{},
+	}, map[string]any{"preserve": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, `<!-- tfreport:preserve-begin id="deploy:sub-a" kind="checkbox" -->`) {
+		t.Errorf("want begin marker with id=deploy:sub-a, got:\n%s", out)
+	}
+	if !strings.Contains(out, `<!-- tfreport:preserve-end id="deploy:sub-a" -->`) {
+		t.Errorf("want end marker, got:\n%s", out)
+	}
+	if !strings.Contains(out, "[ ]") {
+		t.Errorf("default body should be [ ], got:\n%s", out)
+	}
+}
+
+func TestDeployChecklist_preserveSlugifiesLabel(t *testing.T) {
+	out, err := DeployChecklist{}.Render(&BlockContext{
+		Target:       "github-pr-body",
+		Reports:      []*core.Report{{Label: "sub alpha!", MaxImpact: core.ImpactHigh, ActionCounts: map[core.Action]int{core.ActionCreate: 1}}},
+		PriorRegions: map[string]preserve.Region{},
+	}, map[string]any{"preserve": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, `id="deploy:sub-alpha-"`) {
+		t.Errorf("want slugified id deploy:sub-alpha-, got:\n%s", out)
 	}
 }
 

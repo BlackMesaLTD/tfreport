@@ -6,6 +6,23 @@ author: Black Mesa Ltd
 # Drop-in final step after the render action or the aggregate action. Each
 # destination is an independent opt-in — any combination is allowed in a
 # single call.
+#
+# State preservation: when you use tfreport's preserve-* template helpers
+# and want ticked checkboxes / user-edited regions to survive across PR
+# updates, wire a --fetch-body pre-step into your workflow:
+#
+#   - run: python3 scripts/gh_api.py --fetch-body --github-token ${{ secrets.GITHUB_TOKEN }} --output old-body.md
+#   - uses: ./.github/action
+#     with:
+#       plan-file: plan.json
+#       previous-body-file: old-body.md
+#       target: github-pr-body
+#       output-file: new-snippet.md
+#   - uses: ./.github/action/send
+#     with:
+#       content-file: new-snippet.md
+#       pr-body-marker: TFREPORT
+#       github-token: ${{ secrets.GITHUB_TOKEN }}
 
 inputs:
   content-file:
@@ -38,10 +55,27 @@ runs:
     - name: Send
       shell: bash
       env:
-        INPUT_CONTENT_FILE: ${{ inputs.content-file }}
-        INPUT_STEP_SUMMARY: ${{ inputs.step-summary }}
-        INPUT_PR_BODY_MARKER: ${{ inputs.pr-body-marker }}
-        INPUT_PR_COMMENT_MARKER: ${{ inputs.pr-comment-marker }}
-        INPUT_GITHUB_TOKEN: ${{ inputs.github-token }}
-        INPUT_PR_NUMBER: ${{ inputs.pr-number }}
-      run: python3 "$GITHUB_ACTION_PATH/../../../scripts/send-report.py"
+        SEND_CONTENT_FILE: ${{ inputs.content-file }}
+        SEND_STEP_SUMMARY: ${{ inputs.step-summary }}
+        SEND_PR_BODY_MARKER: ${{ inputs.pr-body-marker }}
+        SEND_PR_COMMENT_MARKER: ${{ inputs.pr-comment-marker }}
+        SEND_GITHUB_TOKEN: ${{ inputs.github-token }}
+        SEND_PR_NUMBER: ${{ inputs.pr-number }}
+      run: |
+        ARGS=(--send --content-file "$SEND_CONTENT_FILE")
+        if [ "$SEND_STEP_SUMMARY" = "true" ]; then
+          ARGS+=(--step-summary)
+        fi
+        if [ -n "$SEND_PR_BODY_MARKER" ]; then
+          ARGS+=(--pr-body-marker "$SEND_PR_BODY_MARKER")
+        fi
+        if [ -n "$SEND_PR_COMMENT_MARKER" ]; then
+          ARGS+=(--pr-comment-marker "$SEND_PR_COMMENT_MARKER")
+        fi
+        if [ -n "$SEND_GITHUB_TOKEN" ]; then
+          ARGS+=(--github-token "$SEND_GITHUB_TOKEN")
+        fi
+        if [ -n "$SEND_PR_NUMBER" ]; then
+          ARGS+=(--pr-number "$SEND_PR_NUMBER")
+        fi
+        python3 "$GITHUB_ACTION_PATH/../../../scripts/gh_api.py" "${ARGS[@]}"

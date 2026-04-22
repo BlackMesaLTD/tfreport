@@ -17,22 +17,24 @@ import (
 	"github.com/BlackMesaLTD/tfreport/internal/formatter/blocks"
 	"github.com/BlackMesaLTD/tfreport/internal/formatter/template"
 	"github.com/BlackMesaLTD/tfreport/internal/formatter/templates"
+	"github.com/BlackMesaLTD/tfreport/internal/preserve"
 	"github.com/BlackMesaLTD/tfreport/internal/presets"
 )
 
 var (
 	version = "dev"
 
-	flagTarget       string
-	flagConfig       string
-	flagPlanFile     string
-	flagTextPlanFile string
-	flagReportFiles  []string
-	flagLabel        string
-	flagCustom       []string
-	flagPreserve     []string
-	flagChangedOnly  bool
-	flagQuiet        bool
+	flagTarget           string
+	flagConfig           string
+	flagPlanFile         string
+	flagTextPlanFile     string
+	flagReportFiles      []string
+	flagLabel            string
+	flagCustom           []string
+	flagPreserve         []string
+	flagChangedOnly      bool
+	flagQuiet            bool
+	flagPreviousBodyFile string
 )
 
 var rootCmd = &cobra.Command{
@@ -73,6 +75,7 @@ func init() {
 	rootCmd.Flags().StringArrayVar(&flagPreserve, "preserve", nil, "attribute path to preserve on each resource (repeatable). Dotted paths walk nested maps. Sensitive-marked attrs are never preserved. Accessible as {{ $rc.Preserved.<path> }}")
 	rootCmd.Flags().BoolVar(&flagChangedOnly, "changed-only", false, "show only changed resources (exclude no-ops)")
 	rootCmd.Flags().BoolVarP(&flagQuiet, "quiet", "q", false, "suppress non-essential output")
+	rootCmd.Flags().StringVar(&flagPreviousBodyFile, "previous-body-file", "", "path to the previously-rendered body (e.g. fetched PR body). Use `-` for stdin. When set, preserve regions carry their prior contents forward.")
 }
 
 // Execute runs the root command.
@@ -92,11 +95,16 @@ func run(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("loading config: %w", err)
 	}
 
+	priorRegions, err := loadPreviousBody(flagPreviousBodyFile, cfg.Output.PreserveStrict)
+	if err != nil {
+		return err
+	}
+
 	if len(flagReportFiles) > 1 {
 		if len(flagCustom) > 0 {
 			return fmt.Errorf("--custom is not supported in multi-report mode; set custom metadata per report at prepare time (when the plan JSON is first ingested)")
 		}
-		return runMultiReport(cfg, configDir, flagReportFiles, flagTarget)
+		return runMultiReport(cfg, configDir, flagReportFiles, flagTarget, priorRegions)
 	}
 
 	var report *core.Report
@@ -127,7 +135,7 @@ func run(cmd *cobra.Command, args []string) error {
 	}
 
 	if tf, ok := f.(*formatter.TemplateFormatter); ok {
-		if err := configureTemplateFormatter(tf, cfg, configDir, report, nil, moduleTypeDescriptions); err != nil {
+		if err := configureTemplateFormatter(tf, cfg, configDir, report, nil, moduleTypeDescriptions, priorRegions); err != nil {
 			return err
 		}
 	}
@@ -137,11 +145,16 @@ func run(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("formatting report: %w", err)
 	}
 
-	fmt.Print(output)
+	merged, err := preserve.Reconcile(output, priorRegions)
+	if err != nil {
+		return fmt.Errorf("reconciling preserve regions: %w", err)
+	}
+
+	fmt.Print(merged)
 	return nil
 }
 
-func runMultiReport(cfg config.Config, configDir string, paths []string, target string) error {
+func runMultiReport(cfg config.Config, configDir string, paths []string, target string, priorRegions map[string]preserve.Region) error {
 	f, err := formatter.Get(target)
 	if err != nil {
 		return err
@@ -163,7 +176,7 @@ func runMultiReport(cfg config.Config, configDir string, paths []string, target 
 	}
 
 	if tf, ok := f.(*formatter.TemplateFormatter); ok {
-		if err := configureTemplateFormatter(tf, cfg, configDir, nil, reports, moduleTypeDescriptions); err != nil {
+		if err := configureTemplateFormatter(tf, cfg, configDir, nil, reports, moduleTypeDescriptions, priorRegions); err != nil {
 			return err
 		}
 	}
@@ -173,7 +186,12 @@ func runMultiReport(cfg config.Config, configDir string, paths []string, target 
 		return fmt.Errorf("formatting multi-report: %w", err)
 	}
 
-	fmt.Print(output)
+	merged, err := preserve.Reconcile(output, priorRegions)
+	if err != nil {
+		return fmt.Errorf("reconciling preserve regions: %w", err)
+	}
+
+	fmt.Print(merged)
 	return nil
 }
 
@@ -186,6 +204,7 @@ func configureTemplateFormatter(
 	report *core.Report,
 	reports []*core.Report,
 	moduleTypeDescriptions map[string]string,
+	priorRegions map[string]preserve.Region,
 ) error {
 	effOut := cfg.EffectiveOutput(tf.Target)
 	budget := &blocks.TextPlanBudget{Remaining: stepSummaryBudgetBytes(effOut)}
@@ -198,6 +217,7 @@ func configureTemplateFormatter(
 		ModuleTypeDescriptions: moduleTypeDescriptions,
 		TextBudget:             budget,
 		ConfigDir:              configDir,
+		PriorRegions:           priorRegions,
 	}
 	if report != nil {
 		ctx.DisplayNames = report.DisplayNames

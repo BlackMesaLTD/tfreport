@@ -190,10 +190,27 @@ runs:
     - name: Send
       shell: bash
       env:
-        INPUT_CONTENT_FILE:      ${{ steps.resolve.outputs.output_path }}
-        INPUT_STEP_SUMMARY:      ${{ inputs.step-summary }}
-        INPUT_PR_BODY_MARKER:    ${{ inputs.pr-body-marker }}
-        INPUT_PR_COMMENT_MARKER: ${{ inputs.pr-comment-marker }}
-        INPUT_GITHUB_TOKEN:      ${{ inputs.github-token }}
-        INPUT_PR_NUMBER:         ${{ inputs.pr-number }}
-      run: python3 "$GITHUB_ACTION_PATH/../../../scripts/send-report.py"
+        SEND_CONTENT_FILE:      ${{ steps.resolve.outputs.output_path }}
+        SEND_STEP_SUMMARY:      ${{ inputs.step-summary }}
+        SEND_PR_BODY_MARKER:    ${{ inputs.pr-body-marker }}
+        SEND_PR_COMMENT_MARKER: ${{ inputs.pr-comment-marker }}
+        SEND_GITHUB_TOKEN:      ${{ inputs.github-token }}
+        SEND_PR_NUMBER:         ${{ inputs.pr-number }}
+      run: |
+        ARGS=(--send --content-file "$SEND_CONTENT_FILE")
+        if [ "$SEND_STEP_SUMMARY" = "true" ]; then
+          ARGS+=(--step-summary)
+        fi
+        if [ -n "$SEND_PR_BODY_MARKER" ]; then
+          ARGS+=(--pr-body-marker "$SEND_PR_BODY_MARKER")
+        fi
+        if [ -n "$SEND_PR_COMMENT_MARKER" ]; then
+          ARGS+=(--pr-comment-marker "$SEND_PR_COMMENT_MARKER")
+        fi
+        if [ -n "$SEND_GITHUB_TOKEN" ]; then
+          ARGS+=(--github-token "$SEND_GITHUB_TOKEN")
+        fi
+        if [ -n "$SEND_PR_NUMBER" ]; then
+          ARGS+=(--pr-number "$SEND_PR_NUMBER")
+        fi
+        python3 "$GITHUB_ACTION_PATH/../../../scripts/gh_api.py" "${ARGS[@]}"
