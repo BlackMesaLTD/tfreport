@@ -1411,6 +1411,18 @@ func TestDeployChecklist_preserveEmitsMarkers(t *testing.T) {
 	if !strings.Contains(out, "[ ]") {
 		t.Errorf("default body should be [ ], got:\n%s", out)
 	}
+	// GFM task-list detection needs `- [ ] ` contiguous at the start of a
+	// line — any HTML comment between `-` and `]` breaks checkbox rendering.
+	var taskLine string
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "[ ]") {
+			taskLine = line
+			break
+		}
+	}
+	if !strings.HasPrefix(taskLine, "- [ ] ") {
+		t.Errorf("task-list line must start with `- [ ] ` (no HTML comment between marker and bracket), got: %q", taskLine)
+	}
 }
 
 func TestDeployChecklist_preserveSlugifiesLabel(t *testing.T) {

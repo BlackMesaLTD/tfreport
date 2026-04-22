@@ -124,7 +124,7 @@ func TestExecute_previousBodyRoundTrip(t *testing.T) {
   targets:
     markdown:
       template: |
-        - {{ preserve "deploy:sub-a" "checkbox" }} sub-a
+        {{ preserve "deploy:sub-a" "checkbox" }} sub-a
 `
 	if err := os.WriteFile(configPath, []byte(configBody), 0o644); err != nil {
 		t.Fatal(err)

@@ -34,17 +34,22 @@ func TestIsKnownKind(t *testing.T) {
 }
 
 func TestCheckboxMerge(t *testing.T) {
-	cur := Region{Kind: "checkbox", Body: "[ ]"}
+	// Current body is the canonical rendered structure; merge should
+	// preserve the tick from prior but rebuild structure from current.
+	cur := Region{Kind: "checkbox", Body: "\n- [ ] "}
 	cases := []struct {
 		prior, want string
 	}{
-		{"[x]", "[x]"},
-		{"[ ]", "[ ]"},
-		{"[X]", "[x]"}, // normalised
-		{" [x] ", " [x] "},
-		{"garbage", "[ ]"}, // invalid → current default
-		{"", "[ ]"},
-		{"[x][x]", "[ ]"}, // two ticks = ambiguous → fall back
+		{"\n- [x] ", "\n- [x] "},
+		{"\n- [ ] ", "\n- [ ] "},
+		{"\n- [X] ", "\n- [x] "},                    // normalised
+		{"- [x]", "\n- [x] "},                        // prior missing surround → structure rebuilt
+		{"[x]", "\n- [x] "},                          // user deleted dash → dash restored
+		{"\n [x]", "\n- [x] "},                       // user deleted dash (space kept) → restored
+		{"\n- [x] CANCEL", "\n- [x] "},               // user added note → stripped, tick kept
+		{"garbage", "\n- [ ] "},                      // no bracket token → current default
+		{"", "\n- [ ] "},                             // empty prior → current default
+		{"\n- [x] alpha\n- [ ] beta", "\n- [ ] "},    // ambiguous (two tokens) → current default
 	}
 	k := checkboxKind{}
 	for _, tc := range cases {

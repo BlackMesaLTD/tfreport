@@ -37,11 +37,19 @@ Inline wrap — emits begin + default body + end in one call. Kind dictates
 the default body and validates any extra args.
 
 ```gotmpl
-- {{ preserve "deploy:sub-a" "checkbox" }} sub-a
-- {{ preserve "deploy:sub-b" "checkbox" "[x]" }} sub-b (default ticked)
-- {{ preserve "approver" "radio" (list "platform" "security" "hold") }}
-- {{ preserve "reviewer-note" "text" "placeholder" }}
+{{ preserve "deploy:sub-a" "checkbox" }} sub-a
+{{ preserve "deploy:sub-b" "checkbox" "[x]" }} sub-b (default ticked)
+{{ preserve "approver" "radio" (list "platform" "security" "hold") }}
+{{ preserve "reviewer-note" "text" "placeholder" }}
 ```
+
+For `checkbox` and `radio`, the helper emits the full GFM task-list atom
+(`\n- [ ] ` / `\n- [x] ` lines) inside the region — the begin-marker ends
+up on its own line and `- [ ] ` stays contiguous on the next, which is
+what GitHub's task-list parser requires. **Don't prefix `- ` yourself
+before these inline calls** — doing so produces a dangling list marker
+on the line above. Put the label *after* the `}}` and the helper does the
+rest.
 
 ### `preserve_begin <id> <kind>` / `preserve_end <id>`
 
@@ -81,10 +89,27 @@ block only when it was present on the previous render.
 
 | `kind` | Default body | Valid prior content | On invalid/missing prior |
 |--------|--------------|---------------------|--------------------------|
-| `checkbox` | `[ ]` (override via extra arg `"[x]"`) | exactly one `[x]`/`[X]` or `[ ]` token | falls back to default |
+| `checkbox` | `\n- [ ] ` (override via extra arg `"[x]"`) | exactly one `[x]`/`[X]` or `[ ]` token | falls back to default |
 | `radio` | N-line list of `- [ ] opt` (extra arg: options list; second optional arg: default-selected label) | first `[x]` line whose label is still in the current options list | all unticked |
 | `text` | `""` (override via extra arg) | anything | prior body verbatim |
 | `block` | author-provided between tags | anything | prior body verbatim |
+
+Checkbox merge semantics: on reconcile, only the tick character (space vs
+`x`) is carried from prior into current — the dash, brackets, and spacing
+come from the current render. If a reviewer edits or deletes those
+characters in the PR body, the canonical `- [ ] ` token is restored on
+the next render so GFM task-list rendering can't be broken from outside
+the tick.
+
+Radio is a pick-one convention, not a real radio-button widget. GFM has
+no radio primitive, so the `radio` kind renders as N checkboxes and the
+pick-one invariant is enforced **only on regeneration**: if a reviewer
+ticks two or three options between pushes, GitHub lets them — the next
+tfreport run picks the *first* ticked line in source order and resets the
+rest to `[ ]`. Ticks outside the options list are discarded outright.
+Make sure reviewers know that ticking multiple options is not a way to
+express "all of these" — it's effectively a silent pick of whichever one
+happened to come first.
 
 ### Not supported
 
@@ -187,21 +212,26 @@ output:
 Template:
 
 ```gotmpl
-- {{ preserve "deploy:sub-a" "checkbox" }} **sub-a** ~ [run](https://example/1)
+{{ preserve "deploy:sub-a" "checkbox" }} **sub-a** ~ [run](https://example/1)
 ```
 
 Render:
 
 ```
-- <!-- tfreport:preserve-begin id="deploy:sub-a" kind="checkbox" -->[ ]<!-- tfreport:preserve-end id="deploy:sub-a" --> **sub-a** ~ [run](https://example/1)
+<!-- tfreport:preserve-begin id="deploy:sub-a" kind="checkbox" -->
+- [ ] <!-- tfreport:preserve-end id="deploy:sub-a" --> **sub-a** ~ [run](https://example/1)
 ```
+
+The `- [ ] ` sits contiguous at the start of the list line, so GitHub
+renders it as a tickable checkbox.
 
 ### Human ticks the checkbox in the PR
 
 PR body now contains:
 
 ```
-- <!-- tfreport:preserve-begin id="deploy:sub-a" kind="checkbox" -->[x]<!-- tfreport:preserve-end id="deploy:sub-a" --> **sub-a** ~ [run](https://example/1)
+<!-- tfreport:preserve-begin id="deploy:sub-a" kind="checkbox" -->
+- [x] <!-- tfreport:preserve-end id="deploy:sub-a" --> **sub-a** ~ [run](https://example/1)
 ```
 
 ### Run 2 (new push, prior body fed in)
@@ -213,8 +243,12 @@ tfreport ... --previous-body-file old-pr-body.md
 Render:
 
 ```
-- <!-- tfreport:preserve-begin id="deploy:sub-a" kind="checkbox" -->[x]<!-- tfreport:preserve-end id="deploy:sub-a" --> **sub-a** ~ [run](https://example/2)
+<!-- tfreport:preserve-begin id="deploy:sub-a" kind="checkbox" -->
+- [x] <!-- tfreport:preserve-end id="deploy:sub-a" --> **sub-a** ~ [run](https://example/2)
 ```
 
 The `[x]` is preserved; the workflow URL refreshes because it lives outside
-the region.
+the region. The `- [ ] ` token itself is also inside the region, so if a
+reviewer accidentally deletes the dash or the brackets, the canonical
+structure is restored on the next render — only the tick state (space vs
+`x`) is treated as human-owned.

@@ -21,7 +21,10 @@ func TestPreserve_checkboxDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `<!-- tfreport:preserve-begin id="deploy:a" kind="checkbox" -->[ ]<!-- tfreport:preserve-end id="deploy:a" -->`
+	// Inline checkbox emits the full GFM task-list atom — begin on its own
+	// line, `- [ ] ` contiguous on the next, end tucked after the trailing
+	// space. The whole `\n- [ ] ` sits inside the region body.
+	want := "<!-- tfreport:preserve-begin id=\"deploy:a\" kind=\"checkbox\" -->\n- [ ] <!-- tfreport:preserve-end id=\"deploy:a\" -->"
 	if out != want {
 		t.Errorf("got %q, want %q", out, want)
 	}
@@ -32,8 +35,8 @@ func TestPreserve_checkboxDefaultTicked(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(out, `-->[x]<!--`) {
-		t.Errorf("want [x] default, got %q", out)
+	if !strings.Contains(out, "\n- [x] ") {
+		t.Errorf("want \\n- [x]  in body, got %q", out)
 	}
 }
 

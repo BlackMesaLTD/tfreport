@@ -506,7 +506,7 @@ output:
         {{- $subID       := index $r.Custom "sub_id"       | default "—" -}}
         {{- $workflowURL := index $r.Custom "workflow_url" | default "" -}}
         {{- $label       := $r.Label | default "default" }}
-        - {{ preserve (printf "deploy:%s" $subID) "checkbox" }} {{ $label }} - `{{ $subID }}` ~ {{ if $workflowURL -}}
+        {{ preserve (printf "deploy:%s" $subID) "checkbox" }} {{ $label }} - `{{ $subID }}` ~ {{ if $workflowURL -}}
           [**Summary:**]({{ $workflowURL }})
         {{- else -}}
           **Summary:**
@@ -515,8 +515,14 @@ output:
         <!-- END_SUB_SUMMARY -->
 ```
 
-Only the checkbox cell lives inside the preserve region — the
-workflow-URL tail is generator-owned and refreshes on every render.
+Note the **no leading `- `** in front of `{{ preserve }}` — the helper
+emits the full `- [ ] ` list-item atom on its own line so GitHub's
+task-list parser sees it contiguously. Prefixing a dash yourself would
+produce a dangling marker on the line above. Only the tick character
+(space vs `x`) is treated as human-owned on re-render, so accidental
+edits to the dash or brackets in the PR body are repaired automatically.
+The workflow-URL tail stays outside the region and refreshes on every
+render.
 
 **CI wiring** — one extra step per job: fetch the current PR body and
 pass it to tfreport via `--previous-body-file`:

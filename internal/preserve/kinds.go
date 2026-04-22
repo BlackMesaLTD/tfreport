@@ -58,11 +58,13 @@ func (checkboxKind) Name() string { return "checkbox" }
 
 var checkboxValueRE = regexp.MustCompile(`\[[xX ]\]`)
 
-// Merge accepts the prior body only if it contains exactly one `[x]` or
-// `[ ]` token (after trimming). `[X]` is normalised to `[x]`. Any other
-// content falls back to the current default — the template author's
-// chosen initial render (typically `[ ]`, or `[x]` if they passed a
-// default).
+// Merge extracts the tick state from prior (space or x) and substitutes it
+// into current.Body. Only the tick character is human-owned; the surrounding
+// structure (list marker, brackets, whitespace) belongs to the current render
+// so user edits that would break GFM task-list detection revert on regenerate.
+//
+// Prior must contain exactly one `[x]`, `[X]`, or `[ ]` token; `[X]` normalises
+// to `[x]`. Anything else (zero, multiple, garbage) falls back to current.Body.
 func (checkboxKind) Merge(prior Region, current Region) string {
 	matches := checkboxValueRE.FindAllString(prior.Body, -1)
 	if len(matches) != 1 {
@@ -72,9 +74,7 @@ func (checkboxKind) Merge(prior Region, current Region) string {
 	if tok == "[X]" {
 		tok = "[x]"
 	}
-	// Preserve the surrounding whitespace pattern of the prior body so
-	// the reconciliation is byte-stable when nothing changed.
-	return strings.Replace(prior.Body, matches[0], tok, 1)
+	return strings.Replace(current.Body, "[ ]", tok, 1)
 }
 
 // --- radio ------------------------------------------------------------------
