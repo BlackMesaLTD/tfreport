@@ -1,0 +1,556 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# Four sequential blocks, parallel fan-out within each.
+#   Block 1 — Unit          (no deps)
+#   Block 2 — Binary smoke  (needs: unit-go)
+#   Block 3 — Action smoke  (needs: unit-go + unit-bats) — catches #13-class wiring misses
+#   Block 4 — E2E           (needs: block 3)
+#
+# Block 3 jobs build tfreport from source and pre-install it to /usr/local/bin,
+# then set TFREPORT_SKIP_INSTALL=1 so the composite action's install step uses
+# the PR-branch binary rather than the last released one.
+
+jobs:
+  # =========================================================================
+  # Block 1 — Unit
+  # =========================================================================
+
+  unit-go:
+    name: Unit / Go
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go test -race ./...
+
+  unit-python:
+    name: Unit / Python (gh_api)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 scripts/test_gh_api.py
+
+  unit-bats:
+    name: Unit / bats (parse-*.sh)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install bats
+        run: sudo apt-get update && sudo apt-get install -y bats
+      - run: bats tests/bats/
+
+  # =========================================================================
+  # Block 2 — Binary smoke
+  # =========================================================================
+
+  binary-targets:
+    name: Binary smoke / fixtures × targets
+    runs-on: ubuntu-latest
+    needs: [unit-go]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go build -o tfreport ./cmd/tfreport
+      - name: Render every fixture × target
+        run: |
+          set -e
+          fixtures=(
+            testdata/small_plan.json
+            testdata/medium_plan.json
+            testdata/delete_heavy_plan.json
+            testdata/replace_plan.json
+            testdata/import_plan.json
+          )
+          targets=(markdown github-pr-body github-pr-comment github-step-summary json)
+          for fixture in "${fixtures[@]}"; do
+            for target in "${targets[@]}"; do
+              out=$(./tfreport --plan-file "$fixture" --target "$target")
+              if [ -z "$out" ]; then
+                echo "FAIL: empty output for $fixture @ $target" >&2
+                exit 1
+              fi
+            done
+          done
+
+  # =========================================================================
+  # Block 3 — Action smoke
+  # =========================================================================
+
+  action-root:
+    name: Action smoke / root
+    runs-on: ubuntu-latest
+    needs: [unit-go, unit-bats]
+    env:
+      TFREPORT_SKIP_INSTALL: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build + install from source
+        run: |
+          go build -o tfreport ./cmd/tfreport
+          sudo mv tfreport /usr/local/bin/tfreport
+          sudo chmod +x /usr/local/bin/tfreport
+      - id: render
+        uses: ./.github/action
+        with:
+          plan-file: testdata/small_plan.json
+          target: markdown
+      - name: Assert output
+        env:
+          REPORT: ${{ steps.render.outputs.report }}
+        run: |
+          if [ -z "$REPORT" ]; then
+            echo "FAIL: action.outputs.report empty" >&2
+            exit 1
+          fi
+          bytes=$(printf '%s' "$REPORT" | wc -c)
+          echo "report bytes: $bytes"
+          [ "$bytes" -gt 100 ] || { echo "FAIL: suspiciously short output" >&2; exit 1; }
+
+  action-prepare:
+    name: Action smoke / prepare (uploads artifact)
+    runs-on: ubuntu-latest
+    needs: [unit-go, unit-bats]
+    env:
+      TFREPORT_SKIP_INSTALL: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build + install from source
+        run: |
+          go build -o tfreport ./cmd/tfreport
+          sudo mv tfreport /usr/local/bin/tfreport
+          sudo chmod +x /usr/local/bin/tfreport
+      - id: prep
+        uses: ./.github/action/prepare
+        with:
+          plan-file: testdata/small_plan.json
+          label: test-alpha
+          custom: |
+            sub_id: 00000000-0000-0000-0000-000000000001
+            owner: platform-team
+          preserve_attributes: |
+            id
+            location
+      - name: Assert exported report
+        env:
+          REPORT_FILE: ${{ steps.prep.outputs.report-file }}
+        run: |
+          [ -n "$REPORT_FILE" ] || { echo "FAIL: no report-file output" >&2; exit 1; }
+          [ -f "$REPORT_FILE" ] || { echo "FAIL: report-file does not exist" >&2; exit 1; }
+          jq -e '.label == "test-alpha"' "$REPORT_FILE" >/dev/null
+          jq -e '.custom.owner == "platform-team"' "$REPORT_FILE" >/dev/null
+          jq -e '.custom.sub_id == "00000000-0000-0000-0000-000000000001"' "$REPORT_FILE" >/dev/null
+
+  action-download:
+    name: Action smoke / download (consumes action-prepare artifact)
+    runs-on: ubuntu-latest
+    needs: [action-prepare]
+    steps:
+      - uses: actions/checkout@v4
+      - id: dl
+        uses: ./.github/action/download
+        with:
+          pattern: tfreport-test-alpha
+      - name: Assert inventory
+        env:
+          COUNT: ${{ steps.dl.outputs.count }}
+          REPORTS: ${{ steps.dl.outputs.reports }}
+        run: |
+          [ "$COUNT" = "1" ] || { echo "FAIL: count=$COUNT, expected 1" >&2; exit 1; }
+          first=$(printf '%s\n' "$REPORTS" | head -n 1)
+          [ -f "$first" ] || { echo "FAIL: path $first not readable" >&2; exit 1; }
+          jq -e '.label == "test-alpha"' "$first" >/dev/null
+
+  action-aggregate:
+    name: Action smoke / aggregate (in-job, 2 reports)
+    runs-on: ubuntu-latest
+    needs: [unit-go, unit-bats]
+    env:
+      TFREPORT_SKIP_INSTALL: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build + install from source
+        run: |
+          go build -o tfreport ./cmd/tfreport
+          sudo mv tfreport /usr/local/bin/tfreport
+          sudo chmod +x /usr/local/bin/tfreport
+      - id: prep1
+        uses: ./.github/action/prepare
+        with:
+          plan-file: testdata/small_plan.json
+          label: agg-alpha
+          upload: "false"
+      - id: prep2
+        uses: ./.github/action/prepare
+        with:
+          plan-file: testdata/medium_plan.json
+          label: agg-bravo
+          upload: "false"
+      - id: agg
+        uses: ./.github/action/aggregate
+        with:
+          target: markdown
+          report-files: |
+            ${{ steps.prep1.outputs.report-file }}
+            ${{ steps.prep2.outputs.report-file }}
+      - name: Assert aggregated output
+        env:
+          REPORT: ${{ steps.agg.outputs.report }}
+        run: |
+          printf '%s' "$REPORT" | grep -q 'agg-alpha' || { echo "FAIL: agg-alpha label missing" >&2; exit 1; }
+          printf '%s' "$REPORT" | grep -q 'agg-bravo' || { echo "FAIL: agg-bravo label missing" >&2; exit 1; }
+
+  action-send:
+    name: Action smoke / send (stubbed python3)
+    runs-on: ubuntu-latest
+    needs: [unit-go, unit-bats]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: step-summary-only
+            step-summary: "true"
+            pr-body-marker: ""
+            pr-comment-marker: ""
+            expect: '["--step-summary"]'
+          - name: pr-body-only
+            step-summary: "false"
+            pr-body-marker: TEST_BODY
+            pr-comment-marker: ""
+            expect: '["--pr-body-marker","TEST_BODY"]'
+          - name: pr-comment-only
+            step-summary: "false"
+            pr-body-marker: ""
+            pr-comment-marker: TEST_COMMENT
+            expect: '["--pr-comment-marker","TEST_COMMENT"]'
+          - name: all-three
+            step-summary: "true"
+            pr-body-marker: TEST_BODY
+            pr-comment-marker: TEST_COMMENT
+            expect: '["--step-summary","--pr-body-marker","TEST_BODY","--pr-comment-marker","TEST_COMMENT"]'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install python3 stub
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          cat > "$RUNNER_TEMP/bin/python3" <<'EOF'
+          #!/usr/bin/env bash
+          printf '%s\n' "$@" > "$RUNNER_TEMP/argv.log"
+          exit 0
+          EOF
+          chmod +x "$RUNNER_TEMP/bin/python3"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - name: Write content file
+        run: echo "hello from tfreport send smoke" > "$RUNNER_TEMP/content.md"
+      - uses: ./.github/action/send
+        with:
+          content-file: ${{ runner.temp }}/content.md
+          step-summary: ${{ matrix.step-summary }}
+          pr-body-marker: ${{ matrix.pr-body-marker }}
+          pr-comment-marker: ${{ matrix.pr-comment-marker }}
+          github-token: stub-token
+      - name: Assert stub captured expected argv
+        env:
+          EXPECT: ${{ matrix.expect }}
+        run: |
+          [ -f "$RUNNER_TEMP/argv.log" ] || { echo "FAIL: stub not invoked" >&2; exit 1; }
+          echo "--- stub argv.log ---"
+          cat "$RUNNER_TEMP/argv.log"
+          echo "--- expected flags ---"
+          printf '%s\n' "$EXPECT" | jq -r '.[]'
+          printf '%s\n' "$EXPECT" | jq -r '.[]' | while read -r flag; do
+            grep -qxF "$flag" "$RUNNER_TEMP/argv.log" || {
+              echo "FAIL: expected flag '$flag' not in stub argv" >&2
+              exit 1
+            }
+          done
+
+  action-report-plan:
+    name: Action smoke / report-plan (step-summary destination)
+    runs-on: ubuntu-latest
+    needs: [unit-go, unit-bats]
+    env:
+      TFREPORT_SKIP_INSTALL: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build + install from source
+        run: |
+          go build -o tfreport ./cmd/tfreport
+          sudo mv tfreport /usr/local/bin/tfreport
+          sudo chmod +x /usr/local/bin/tfreport
+      - uses: ./.github/action/report-plan
+        with:
+          plan-file: testdata/small_plan.json
+          target: github-step-summary
+          step-summary: "true"
+          label: rp-smoke
+      - name: Assert step summary populated
+        run: |
+          bytes=$(wc -c < "$GITHUB_STEP_SUMMARY")
+          [ "$bytes" -gt 500 ] || { echo "FAIL: step summary only $bytes bytes" >&2; exit 1; }
+
+  action-report-matrix:
+    name: Action smoke / report-matrix (step-summary destination)
+    runs-on: ubuntu-latest
+    needs: [unit-go, unit-bats]
+    env:
+      TFREPORT_SKIP_INSTALL: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build + install from source
+        run: |
+          go build -o tfreport ./cmd/tfreport
+          sudo mv tfreport /usr/local/bin/tfreport
+          sudo chmod +x /usr/local/bin/tfreport
+      - uses: ./.github/action/prepare
+        with:
+          plan-file: testdata/small_plan.json
+          label: rm-alpha
+      - uses: ./.github/action/prepare
+        with:
+          plan-file: testdata/medium_plan.json
+          label: rm-bravo
+      - uses: ./.github/action/report-matrix
+        with:
+          artifact-pattern: tfreport-rm-*
+          target: github-step-summary
+          step-summary: "true"
+      - name: Assert step summary populated
+        run: |
+          bytes=$(wc -c < "$GITHUB_STEP_SUMMARY")
+          [ "$bytes" -gt 500 ] || { echo "FAIL: step summary only $bytes bytes" >&2; exit 1; }
+          grep -q 'rm-alpha' "$GITHUB_STEP_SUMMARY" || { echo "FAIL: rm-alpha label missing" >&2; exit 1; }
+          grep -q 'rm-bravo' "$GITHUB_STEP_SUMMARY" || { echo "FAIL: rm-bravo label missing" >&2; exit 1; }
+
+  action-tf-smoke:
+    name: "Action smoke / terraform (plan: input branch)"
+    runs-on: ubuntu-latest
+    needs: [unit-go, unit-bats]
+    env:
+      TFREPORT_SKIP_INSTALL: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build + install from source
+        run: |
+          go build -o tfreport ./cmd/tfreport
+          sudo mv tfreport /usr/local/bin/tfreport
+          sudo chmod +x /usr/local/bin/tfreport
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+      - name: Terraform plan (null_resource fixture)
+        working-directory: tests/tf
+        run: |
+          terraform init -no-color
+          terraform plan -no-color -out=plan.out
+      - id: render
+        uses: ./.github/action
+        with:
+          plan: tests/tf/plan.out
+          target: markdown
+      - name: Assert render non-empty
+        env:
+          REPORT: ${{ steps.render.outputs.report }}
+        run: |
+          [ -n "$REPORT" ] || { echo "FAIL: empty output" >&2; exit 1; }
+          printf '%s' "$REPORT" | grep -q 'null_resource' || { echo "FAIL: null_resource not in output" >&2; exit 1; }
+
+  # =========================================================================
+  # Block 4 — E2E
+  # =========================================================================
+
+  e2e-prepare-matrix:
+    name: E2E / prepare (matrix leg)
+    runs-on: ubuntu-latest
+    needs:
+      - action-root
+      - action-prepare
+      - action-download
+      - action-aggregate
+      - action-send
+      - action-report-plan
+      - action-report-matrix
+      - action-tf-smoke
+    env:
+      TFREPORT_SKIP_INSTALL: "1"
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: e2e-alpha
+            plan: testdata/small_plan.json
+            owner: team-alpha
+          - label: e2e-bravo
+            plan: testdata/medium_plan.json
+            owner: team-bravo
+          - label: e2e-charlie
+            plan: testdata/replace_plan.json
+            owner: team-charlie
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build + install from source
+        run: |
+          go build -o tfreport ./cmd/tfreport
+          sudo mv tfreport /usr/local/bin/tfreport
+          sudo chmod +x /usr/local/bin/tfreport
+      - uses: ./.github/action/prepare
+        with:
+          plan-file: ${{ matrix.plan }}
+          label: ${{ matrix.label }}
+          custom: |
+            owner: ${{ matrix.owner }}
+
+  e2e-aggregate:
+    name: E2E / aggregate (cross-job)
+    runs-on: ubuntu-latest
+    needs: [e2e-prepare-matrix]
+    env:
+      TFREPORT_SKIP_INSTALL: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build + install from source
+        run: |
+          go build -o tfreport ./cmd/tfreport
+          sudo mv tfreport /usr/local/bin/tfreport
+          sudo chmod +x /usr/local/bin/tfreport
+      - id: dl
+        uses: ./.github/action/download
+        with:
+          pattern: tfreport-e2e-*
+      - id: agg
+        uses: ./.github/action/aggregate
+        with:
+          target: markdown
+          report-files: ${{ steps.dl.outputs.reports }}
+      - name: Assert all 3 labels + custom values
+        env:
+          COUNT: ${{ steps.dl.outputs.count }}
+          REPORT: ${{ steps.agg.outputs.report }}
+        run: |
+          [ "$COUNT" = "3" ] || { echo "FAIL: count=$COUNT, expected 3" >&2; exit 1; }
+          for label in e2e-alpha e2e-bravo e2e-charlie; do
+            printf '%s' "$REPORT" | grep -q "$label" || {
+              echo "FAIL: label $label missing" >&2; exit 1
+            }
+          done
+          for owner in team-alpha team-bravo team-charlie; do
+            printf '%s' "$REPORT" | grep -q "$owner" || {
+              echo "FAIL: owner $owner missing (custom metadata lost)" >&2; exit 1
+            }
+          done
+
+  e2e-preserve-roundtrip:
+    # State-preservation regression gate. Asserts that aggregate's
+    # --previous-body-file input wiring carries ticked checkboxes forward
+    # across re-renders. This is the exact code path that regressed in
+    # PR #13 (missed on aggregate/action.yml, patched post-merge in 65cc8a1).
+    name: E2E / preserve round-trip (aggregate)
+    runs-on: ubuntu-latest
+    needs:
+      - action-root
+      - action-prepare
+      - action-download
+      - action-aggregate
+      - action-send
+      - action-report-plan
+      - action-report-matrix
+      - action-tf-smoke
+    env:
+      TFREPORT_SKIP_INSTALL: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build + install from source
+        run: |
+          go build -o tfreport ./cmd/tfreport
+          sudo mv tfreport /usr/local/bin/tfreport
+          sudo chmod +x /usr/local/bin/tfreport
+      - id: prep1
+        uses: ./.github/action/prepare
+        with:
+          plan-file: testdata/small_plan.json
+          label: preserve-alpha
+          upload: "false"
+      - id: prep2
+        uses: ./.github/action/prepare
+        with:
+          plan-file: testdata/medium_plan.json
+          label: preserve-bravo
+          upload: "false"
+      - name: Write primer body (hand-crafted ticked markers)
+        run: |
+          cat > "$RUNNER_TEMP/primer.md" <<'EOF'
+          # tfreport preserve round-trip test
+
+          ### Deploy Checklist
+          - <!-- tfreport:preserve-begin id="deploy:preserve-alpha" kind="checkbox" -->[x]<!-- tfreport:preserve-end id="deploy:preserve-alpha" --> **preserve-alpha** — prior-ticked
+          - <!-- tfreport:preserve-begin id="deploy:preserve-bravo" kind="checkbox" -->[x]<!-- tfreport:preserve-end id="deploy:preserve-bravo" --> **preserve-bravo** — prior-ticked
+          EOF
+      - name: Render with previous-body-file (should preserve ticks)
+        uses: ./.github/action/aggregate
+        with:
+          target: github-pr-body
+          config: tests/fixtures/preserve.yml
+          report-files: |
+            ${{ steps.prep1.outputs.report-file }}
+            ${{ steps.prep2.outputs.report-file }}
+          previous-body-file: ${{ runner.temp }}/primer.md
+          output-file: ${{ runner.temp }}/rendered.md
+      - name: Assert ticks survived the round-trip
+        run: |
+          echo "--- rendered.md ---"
+          cat "$RUNNER_TEMP/rendered.md"
+          echo "--- assertions ---"
+          tick_count=$(grep -c '\[x\]' "$RUNNER_TEMP/rendered.md" || true)
+          [ "$tick_count" -ge 2 ] || {
+            echo "FAIL: expected >=2 ticked checkboxes, got $tick_count" >&2
+            echo "       ticks were present in primer but did NOT survive re-render" >&2
+            echo "       this is the PR #13 regression class" >&2
+            exit 1
+          }
+          marker_count=$(grep -c 'preserve-begin' "$RUNNER_TEMP/rendered.md" || true)
+          [ "$marker_count" -ge 2 ] || {
+            echo "FAIL: expected >=2 preserve-begin markers, got $marker_count" >&2
+            exit 1
+          }

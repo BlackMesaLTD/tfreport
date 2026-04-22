@@ -1,0 +1,9 @@
+{{/* Test-only template for e2e-preserve-roundtrip CI job.
+     Calls deploy_checklist with preserve=true so the render emits
+     `<!-- tfreport:preserve-begin ... -->` markers. The default
+     github-pr-body.multi.tmpl calls {{ .DeployChecklist }} which
+     is pre-rendered with args=nil (no preserve) — that's correct
+     for production defaults but useless for testing round-trip. */}}
+# tfreport preserve round-trip test
+
+{{ deploy_checklist "preserve" "true" }}

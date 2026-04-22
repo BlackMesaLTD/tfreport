@@ -7,10 +7,13 @@
 
 <!-- How did you verify the change?
      Call out specific fixtures used, rendered output reviewed, etc.
-     CI covers unit and integration; mention anything not covered there. -->
+     CI covers unit (go/python/bats), binary smoke, action smoke, and E2E —
+     mention anything not covered. -->
 
 - [ ] `go test -race ./...` passes locally
+- [ ] `bats tests/bats/` passes locally (if `scripts/parse-*.sh` touched)
 - [ ] Output-affecting change: rendered against `testdata/` fixtures and the diff looks right
+- [ ] Composite-action change: all 7 `.github/action/*/action.yml` files in sync if a new binary flag is being exposed
 
 ## Breaking changes
 

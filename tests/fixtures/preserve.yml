@@ -1,0 +1,7 @@
+# Test-only config for e2e-preserve-roundtrip. Points the
+# github-pr-body target at a minimal template that calls
+# deploy_checklist with preserve=true.
+output:
+  targets:
+    github-pr-body:
+      template_file: preserve_test.tmpl
