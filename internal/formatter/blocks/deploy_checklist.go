@@ -58,8 +58,12 @@ func (DeployChecklist) Render(ctx *BlockContext, args map[string]any) (string, e
 	var b strings.Builder
 	b.WriteString("### Deploy Checklist\n")
 	for _, r := range reports {
-		b.WriteString("- ")
 		if preserveOn {
+			// GFM task-list detection needs `- [ ] ` (with trailing space)
+			// contiguous at the start of the line. Emit the begin-marker on
+			// its own line above so the whole token sits inside the region
+			// body — user edits to the dash/brackets/space revert on re-render,
+			// only the tick character is preserved.
 			id := "deploy:" + preserve.SlugifyID(reportLabel(r))
 			begin, err := preserve.RenderBegin(id, "checkbox", nil)
 			if err != nil {
@@ -70,11 +74,10 @@ func (DeployChecklist) Render(ctx *BlockContext, args map[string]any) (string, e
 				return "", fmt.Errorf("deploy_checklist: %w", err)
 			}
 			b.WriteString(begin)
-			b.WriteString("[ ]")
+			b.WriteString("\n- [ ] ")
 			b.WriteString(end)
-			b.WriteString(" ")
 		} else {
-			b.WriteString("[ ] ")
+			b.WriteString("- [ ] ")
 		}
 		for i, col := range cols {
 			if i > 0 {

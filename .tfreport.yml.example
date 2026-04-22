@@ -129,8 +129,9 @@ output:
   # preserve_strict: false
   #
   # Example template using the `preserve` helper so a change-control tick
-  # survives PR pushes. The `{{ preserve }}` call wraps only the checkbox
-  # cell — the workflow URL tail still refreshes on every render.
+  # survives PR pushes. The helper emits the full `- [ ] ` list-item atom
+  # on its own line — do NOT prefix `- ` yourself. The workflow URL tail
+  # lives outside the region and refreshes on every render.
   #
   # targets:
   #   github-pr-body:
@@ -139,7 +140,7 @@ output:
   #       {{- $subID       := index $r.Custom "sub_id"       | default "—" -}}
   #       {{- $workflowURL := index $r.Custom "workflow_url" | default "" -}}
   #       {{- $label       := $r.Label | default "default" }}
-  #       - {{ preserve (printf "deploy:%s" $subID) "checkbox" }} {{ $label }} - `{{ $subID }}` ~ {{ if $workflowURL }}[**Summary:**]({{ $workflowURL }}){{ else }}**Summary:**{{ end }} `{{ $r.MaxImpact }}`
+  #       {{ preserve (printf "deploy:%s" $subID) "checkbox" }} {{ $label }} - `{{ $subID }}` ~ {{ if $workflowURL }}[**Summary:**]({{ $workflowURL }}){{ else }}**Summary:**{{ end }} `{{ $r.MaxImpact }}`
   #       {{ end }}
   #
   # Alternative: use the built-in deploy_checklist block with preserve=true.

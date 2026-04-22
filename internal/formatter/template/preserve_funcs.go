@@ -156,18 +156,24 @@ func buildKindBody(id, kind string, extra []any, _ *blocks.BlockContext) (map[st
 	attrs := map[string]string{}
 	switch kind {
 	case "checkbox":
-		def := "[ ]"
+		// Body is the full GFM task-list atom `\n- [ ] ` — the begin-marker
+		// ends up on its own line and `- [ ] ` stays contiguous on the next,
+		// which is what GitHub's task-list parser requires. Authors must NOT
+		// prefix `- ` themselves when using inline checkbox (same contract as
+		// inline radio).
+		def := "\n- [ ] "
 		if len(extra) >= 1 {
 			s, ok := extra[0].(string)
 			if !ok {
 				return nil, "", fmt.Errorf("preserve id=%q kind=checkbox: default must be a string, got %T", id, extra[0])
 			}
-			if s != "[ ]" && s != "[x]" && s != "[X]" {
+			switch s {
+			case "[ ]":
+				def = "\n- [ ] "
+			case "[x]", "[X]":
+				def = "\n- [x] "
+			default:
 				return nil, "", fmt.Errorf("preserve id=%q kind=checkbox: default must be \"[ ]\" or \"[x]\", got %q", id, s)
-			}
-			def = s
-			if def == "[X]" {
-				def = "[x]"
 			}
 		}
 		return attrs, def, nil
