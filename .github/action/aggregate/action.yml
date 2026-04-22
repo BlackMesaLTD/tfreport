@@ -29,6 +29,14 @@ inputs:
   output-file:
     description: "Optional file path to write the rendered output to. Recommended for large cross-sub renders that blow past the ~1 MB GITHUB_OUTPUT ceiling."
     required: false
+  previous-body-file:
+    description: |
+      Optional path to the previously-rendered body (typically the current
+      PR body fetched via `python3 scripts/gh_api.py --fetch-body`). When
+      set, tfreport's preserve regions carry their prior contents forward.
+      See docs/state-preservation.md.
+    required: false
+    default: ""
 
 outputs:
   report:
@@ -48,11 +56,12 @@ runs:
       id: run
       shell: bash
       env:
-        INPUT_REPORT_FILES: ${{ inputs.report-files }}
-        INPUT_TARGET: ${{ inputs.target }}
-        INPUT_CONFIG: ${{ inputs.config }}
-        INPUT_CHANGED_ONLY: ${{ inputs.changed-only }}
-        INPUT_OUTPUT_FILE: ${{ inputs.output-file }}
+        INPUT_REPORT_FILES:       ${{ inputs.report-files }}
+        INPUT_TARGET:             ${{ inputs.target }}
+        INPUT_CONFIG:             ${{ inputs.config }}
+        INPUT_CHANGED_ONLY:       ${{ inputs.changed-only }}
+        INPUT_OUTPUT_FILE:        ${{ inputs.output-file }}
+        INPUT_PREVIOUS_BODY_FILE: ${{ inputs.previous-body-file }}
       run: |
         shopt -s nullglob
 
@@ -78,6 +87,9 @@ runs:
         fi
         if [ "$INPUT_CHANGED_ONLY" = "true" ]; then
           ARGS+=(--changed-only)
+        fi
+        if [ -n "$INPUT_PREVIOUS_BODY_FILE" ]; then
+          ARGS+=(--previous-body-file "$INPUT_PREVIOUS_BODY_FILE")
         fi
 
         OUTPUT=$(tfreport "${ARGS[@]}")
