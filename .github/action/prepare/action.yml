@@ -205,7 +205,7 @@ runs:
 
     - name: Upload artifact
       if: ${{ inputs.upload == 'true' }}
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v6
       with:
         name: ${{ steps.run.outputs.artifact_name }}
         path: ${{ steps.run.outputs.report_file }}

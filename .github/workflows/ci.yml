@@ -31,8 +31,8 @@ jobs:
     name: Unit / Go
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
       - run: go test -race ./...
@@ -41,14 +41,14 @@ jobs:
     name: Unit / Python (gh_api)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - run: python3 scripts/test_gh_api.py
 
   unit-bats:
     name: Unit / bats (parse-*.sh)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install bats
         run: sudo apt-get update && sudo apt-get install -y bats
       - run: bats tests/bats/
@@ -62,8 +62,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: [unit-go]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
       - run: go build -o tfreport ./cmd/tfreport
@@ -99,8 +99,8 @@ jobs:
     env:
       TFREPORT_SKIP_INSTALL: "1"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
       - name: Build + install from source
@@ -132,8 +132,8 @@ jobs:
     env:
       TFREPORT_SKIP_INSTALL: "1"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
       - name: Build + install from source
@@ -167,7 +167,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [action-prepare]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - id: dl
         uses: ./.github/action/download
         with:
@@ -189,8 +189,8 @@ jobs:
     env:
       TFREPORT_SKIP_INSTALL: "1"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
       - name: Build + install from source
@@ -227,35 +227,38 @@ jobs:
           printf '%s' "$REPORT" | grep -q 'agg-bravo' || { echo "FAIL: agg-bravo label missing" >&2; exit 1; }
 
   action-send:
-    name: Action smoke / send (stubbed python3)
+    # Matrix leg name template replaces GHA's default (which splices all
+    # matrix values into the job title). Without this, the UI shows noisy
+    # names like `action-send (pr-body-only, false, TEST_BODY, [...])`.
+    name: "Action smoke / send / ${{ matrix.scenario }}"
     runs-on: ubuntu-latest
     needs: [unit-go, unit-bats]
     strategy:
       fail-fast: false
       matrix:
         include:
-          - name: step-summary-only
+          - scenario: step-summary-only
             step-summary: "true"
             pr-body-marker: ""
             pr-comment-marker: ""
             expect: '["--step-summary"]'
-          - name: pr-body-only
+          - scenario: pr-body-only
             step-summary: "false"
             pr-body-marker: TEST_BODY
             pr-comment-marker: ""
             expect: '["--pr-body-marker","TEST_BODY"]'
-          - name: pr-comment-only
+          - scenario: pr-comment-only
             step-summary: "false"
             pr-body-marker: ""
             pr-comment-marker: TEST_COMMENT
             expect: '["--pr-comment-marker","TEST_COMMENT"]'
-          - name: all-three
+          - scenario: all-three
             step-summary: "true"
             pr-body-marker: TEST_BODY
             pr-comment-marker: TEST_COMMENT
             expect: '["--step-summary","--pr-body-marker","TEST_BODY","--pr-comment-marker","TEST_COMMENT"]'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install python3 stub
         run: |
           mkdir -p "$RUNNER_TEMP/bin"
@@ -298,8 +301,8 @@ jobs:
     env:
       TFREPORT_SKIP_INSTALL: "1"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
       - name: Build + install from source
@@ -329,8 +332,8 @@ jobs:
     env:
       TFREPORT_SKIP_INSTALL: "1"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
       - name: Build + install from source
@@ -368,8 +371,8 @@ jobs:
     env:
       TFREPORT_SKIP_INSTALL: "1"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
       - name: Build + install from source
@@ -377,7 +380,7 @@ jobs:
           go build -o tfreport ./cmd/tfreport
           sudo mv tfreport /usr/local/bin/tfreport
           sudo chmod +x /usr/local/bin/tfreport
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v4
         with:
           terraform_wrapper: false
       - name: Terraform plan + stage fixture at workspace root
@@ -419,7 +422,7 @@ jobs:
   # =========================================================================
 
   e2e-prepare-matrix:
-    name: E2E / prepare (matrix leg)
+    name: "E2E / prepare / ${{ matrix.label }}"
     runs-on: ubuntu-latest
     needs:
       - action-root
@@ -446,8 +449,8 @@ jobs:
             plan: testdata/replace_plan.json
             owner: team-charlie
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
       - name: Build + install from source
@@ -469,8 +472,8 @@ jobs:
     env:
       TFREPORT_SKIP_INSTALL: "1"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
       - name: Build + install from source
@@ -541,8 +544,8 @@ jobs:
     env:
       TFREPORT_SKIP_INSTALL: "1"
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
       - name: Build + install from source
