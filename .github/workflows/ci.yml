@@ -487,22 +487,40 @@ jobs:
         with:
           target: markdown
           report-files: ${{ steps.dl.outputs.reports }}
-      - name: Assert all 3 labels + custom values
+      - name: Assert count + labels + custom survived round-trip
         env:
           COUNT: ${{ steps.dl.outputs.count }}
+          REPORTS: ${{ steps.dl.outputs.reports }}
           REPORT: ${{ steps.agg.outputs.report }}
         run: |
           [ "$COUNT" = "3" ] || { echo "FAIL: count=$COUNT, expected 3" >&2; exit 1; }
+
+          # Labels must appear in the aggregated markdown render.
           for label in e2e-alpha e2e-bravo e2e-charlie; do
             printf '%s' "$REPORT" | grep -q "$label" || {
-              echo "FAIL: label $label missing" >&2; exit 1
+              echo "FAIL: label $label missing from aggregated output" >&2; exit 1
             }
           done
-          for owner in team-alpha team-bravo team-charlie; do
-            printf '%s' "$REPORT" | grep -q "$owner" || {
-              echo "FAIL: owner $owner missing (custom metadata lost)" >&2; exit 1
+
+          # Custom metadata (owner) survives the JSON round-trip even though the
+          # default markdown template does not render it. Verify via jq on each
+          # downloaded report.
+          while IFS= read -r path; do
+            [ -z "$path" ] && continue
+            label=$(jq -r '.label' "$path")
+            owner=$(jq -r '.custom.owner // "<missing>"' "$path")
+            case "$label" in
+              e2e-alpha)   expected=team-alpha ;;
+              e2e-bravo)   expected=team-bravo ;;
+              e2e-charlie) expected=team-charlie ;;
+              *) echo "FAIL: unknown label $label" >&2; exit 1 ;;
+            esac
+            [ "$owner" = "$expected" ] || {
+              echo "FAIL: $label has owner=$owner, expected $expected" >&2
+              exit 1
             }
-          done
+            echo "ok: $label.custom.owner = $owner"
+          done <<< "$REPORTS"
 
   e2e-preserve-roundtrip:
     # State-preservation regression gate. Asserts that aggregate's
