@@ -313,10 +313,14 @@ jobs:
           target: github-step-summary
           step-summary: "true"
           label: rp-smoke
-      - name: Assert step summary populated
+          output-file: ${{ runner.temp }}/rp.md
+      - name: Assert rendered file populated
+        # $GITHUB_STEP_SUMMARY is unique per STEP, so we can't inspect it
+        # from a later step. Assert via the action's output-file instead.
         run: |
-          bytes=$(wc -c < "$GITHUB_STEP_SUMMARY")
-          [ "$bytes" -gt 500 ] || { echo "FAIL: step summary only $bytes bytes" >&2; exit 1; }
+          [ -s "$RUNNER_TEMP/rp.md" ] || { echo "FAIL: rp.md empty or missing" >&2; exit 1; }
+          bytes=$(wc -c < "$RUNNER_TEMP/rp.md")
+          [ "$bytes" -gt 500 ] || { echo "FAIL: only $bytes bytes" >&2; exit 1; }
 
   action-report-matrix:
     name: Action smoke / report-matrix (step-summary destination)
@@ -347,12 +351,15 @@ jobs:
           artifact-pattern: tfreport-rm-*
           target: github-step-summary
           step-summary: "true"
-      - name: Assert step summary populated
+          output-file: ${{ runner.temp }}/rm.md
+      - name: Assert rendered file populated
+        # $GITHUB_STEP_SUMMARY is unique per STEP, so assert via output-file.
         run: |
-          bytes=$(wc -c < "$GITHUB_STEP_SUMMARY")
-          [ "$bytes" -gt 500 ] || { echo "FAIL: step summary only $bytes bytes" >&2; exit 1; }
-          grep -q 'rm-alpha' "$GITHUB_STEP_SUMMARY" || { echo "FAIL: rm-alpha label missing" >&2; exit 1; }
-          grep -q 'rm-bravo' "$GITHUB_STEP_SUMMARY" || { echo "FAIL: rm-bravo label missing" >&2; exit 1; }
+          [ -s "$RUNNER_TEMP/rm.md" ] || { echo "FAIL: rm.md empty or missing" >&2; exit 1; }
+          bytes=$(wc -c < "$RUNNER_TEMP/rm.md")
+          [ "$bytes" -gt 500 ] || { echo "FAIL: only $bytes bytes" >&2; exit 1; }
+          grep -q 'rm-alpha' "$RUNNER_TEMP/rm.md" || { echo "FAIL: rm-alpha label missing" >&2; exit 1; }
+          grep -q 'rm-bravo' "$RUNNER_TEMP/rm.md" || { echo "FAIL: rm-bravo label missing" >&2; exit 1; }
 
   action-tf-smoke:
     name: "Action smoke / terraform (plan: input branch)"
@@ -381,9 +388,20 @@ jobs:
           # TF_DATA_DIR alone is not sufficient — show also consults the
           # module config file (main.tf) relative to PWD.
           (cd tests/tf && terraform init -no-color && terraform plan -no-color -out=plan.out)
-          cp -r tests/tf/.terraform ./.terraform
+          cp -a tests/tf/.terraform ./.terraform
           cp tests/tf/main.tf ./main.tf
           cp tests/tf/plan.out ./plan.out
+          [ -f tests/tf/.terraform.lock.hcl ] && cp tests/tf/.terraform.lock.hcl ./.terraform.lock.hcl || true
+          echo "--- staged files ---"
+          ls -la main.tf plan.out .terraform.lock.hcl 2>/dev/null || true
+          ls -la .terraform/providers 2>/dev/null | head -10
+          echo "--- pre-flight: terraform show from workspace root ---"
+          terraform show -json ./plan.out > /tmp/preflight.json 2>&1 || {
+            echo "::error::pre-flight terraform show failed — staging did not produce a usable workspace"
+            head -40 /tmp/preflight.json
+            exit 1
+          }
+          echo "pre-flight ok: $(wc -c < /tmp/preflight.json) bytes of JSON"
       - id: render
         uses: ./.github/action
         with:
