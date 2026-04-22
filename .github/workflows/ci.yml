@@ -204,6 +204,8 @@ jobs:
           plan-file: testdata/small_plan.json
           label: agg-alpha
           upload: "false"
+      - name: Save prep1 report aside (prepare writes to a static path; prep2 would overwrite)
+        run: cp "${{ steps.prep1.outputs.report-file }}" "$RUNNER_TEMP/agg-prep1.json"
       - id: prep2
         uses: ./.github/action/prepare
         with:
@@ -215,7 +217,7 @@ jobs:
         with:
           target: markdown
           report-files: |
-            ${{ steps.prep1.outputs.report-file }}
+            ${{ runner.temp }}/agg-prep1.json
             ${{ steps.prep2.outputs.report-file }}
       - name: Assert aggregated output
         env:
@@ -283,7 +285,7 @@ jobs:
           echo "--- expected flags ---"
           printf '%s\n' "$EXPECT" | jq -r '.[]'
           printf '%s\n' "$EXPECT" | jq -r '.[]' | while read -r flag; do
-            grep -qxF "$flag" "$RUNNER_TEMP/argv.log" || {
+            grep -qxF -- "$flag" "$RUNNER_TEMP/argv.log" || {
               echo "FAIL: expected flag '$flag' not in stub argv" >&2
               exit 1
             }
@@ -371,15 +373,21 @@ jobs:
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_wrapper: false
-      - name: Terraform plan (null_resource fixture)
-        working-directory: tests/tf
+      - name: Terraform plan + stage fixture at workspace root
         run: |
-          terraform init -no-color
-          terraform plan -no-color -out=plan.out
+          # `terraform show` needs main.tf + .terraform + plan.out in PWD to
+          # resolve providers. The tfreport action's internal `terraform show`
+          # runs from workspace root, so stage the whole fixture there.
+          # TF_DATA_DIR alone is not sufficient — show also consults the
+          # module config file (main.tf) relative to PWD.
+          (cd tests/tf && terraform init -no-color && terraform plan -no-color -out=plan.out)
+          cp -r tests/tf/.terraform ./.terraform
+          cp tests/tf/main.tf ./main.tf
+          cp tests/tf/plan.out ./plan.out
       - id: render
         uses: ./.github/action
         with:
-          plan: tests/tf/plan.out
+          plan: plan.out
           target: markdown
       - name: Assert render non-empty
         env:
@@ -512,6 +520,8 @@ jobs:
           plan-file: testdata/small_plan.json
           label: preserve-alpha
           upload: "false"
+      - name: Save prep1 report aside (prepare writes to a static path; prep2 would overwrite)
+        run: cp "${{ steps.prep1.outputs.report-file }}" "$RUNNER_TEMP/preserve-prep1.json"
       - id: prep2
         uses: ./.github/action/prepare
         with:
@@ -533,7 +543,7 @@ jobs:
           target: github-pr-body
           config: tests/fixtures/preserve.yml
           report-files: |
-            ${{ steps.prep1.outputs.report-file }}
+            ${{ runner.temp }}/preserve-prep1.json
             ${{ steps.prep2.outputs.report-file }}
           previous-body-file: ${{ runner.temp }}/primer.md
           output-file: ${{ runner.temp }}/rendered.md
