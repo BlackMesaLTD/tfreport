@@ -162,6 +162,40 @@ runs:
         TFREPORT_VERSION: ${{ inputs.version }}
       run: bash "$GITHUB_ACTION_PATH/../../../scripts/install-tfreport.sh"
 
+    # Auto-fetch the prior PR body (or sticky comment) so tfreport's
+    # preserve regions carry their state forward. No-op when no PR
+    # destination is set or no token is available.
+    - name: Fetch prior body for state preservation
+      id: prior
+      if: ${{ inputs.github-token != '' && (inputs.pr-body-marker != '' || inputs.pr-comment-marker != '') }}
+      shell: bash
+      env:
+        GH_TOKEN:          ${{ inputs.github-token }}
+        BODY_MARKER:       ${{ inputs.pr-body-marker }}
+        COMMENT_MARKER:    ${{ inputs.pr-comment-marker }}
+        PR_NUMBER:         ${{ inputs.pr-number }}
+      run: |
+        prior_path="$RUNNER_TEMP/tfreport-prior-body.md"
+        : > "$prior_path"
+
+        ARGS=(--github-token "$GH_TOKEN" --output "$prior_path")
+        if [ -n "$PR_NUMBER" ]; then
+          ARGS+=(--pr-number "$PR_NUMBER")
+        fi
+
+        if [ -n "$BODY_MARKER" ]; then
+          python3 "$GITHUB_ACTION_PATH/../../../scripts/gh_api.py" --fetch-body "${ARGS[@]}"
+        elif [ -n "$COMMENT_MARKER" ]; then
+          python3 "$GITHUB_ACTION_PATH/../../../scripts/gh_api.py" --fetch-comment --marker "$COMMENT_MARKER" "${ARGS[@]}"
+        fi
+
+        if [ -s "$prior_path" ]; then
+          echo "prior_path=$prior_path" >> "$GITHUB_OUTPUT"
+          echo "Fetched prior body: $(wc -c < "$prior_path") bytes"
+        else
+          echo "No prior body available (empty fetch) — preserve regions will emit defaults"
+        fi
+
     - name: Render
       shell: bash
       env:
@@ -174,6 +208,7 @@ runs:
         PLAN_FILE:             ${{ steps.prep.outputs.plan_file }}
         TEXT_PLAN_FILE:        ${{ steps.prep.outputs.text_plan_file }}
         OUTPUT_PATH:           ${{ steps.resolve.outputs.path }}
+        PRIOR_BODY_PATH:       ${{ steps.prior.outputs.prior_path }}
       run: |
         ARGS=(--plan-file "$PLAN_FILE" --target "$INPUT_TARGET")
         if [ -n "$TEXT_PLAN_FILE" ]; then
@@ -187,6 +222,10 @@ runs:
         fi
         if [ "$INPUT_CHANGED_ONLY" = "true" ]; then
           ARGS+=(--changed-only)
+        fi
+        if [ -n "$PRIOR_BODY_PATH" ] && [ -s "$PRIOR_BODY_PATH" ]; then
+          ARGS+=(--previous-body-file "$PRIOR_BODY_PATH")
+          echo "State preservation: using $PRIOR_BODY_PATH"
         fi
 
         # Translate the YAML-block `custom:` input into repeated --custom flags.
