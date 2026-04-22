@@ -95,6 +95,13 @@ func run(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("loading config: %w", err)
 	}
 
+	// Both --previous-body-file=- and the plan input can consume stdin.
+	// Reject the ambiguous combination early with an actionable error
+	// instead of letting one eat the other's bytes.
+	if flagPreviousBodyFile == "-" && flagPlanFile == "" && len(flagReportFiles) == 0 {
+		return fmt.Errorf("--previous-body-file=- conflicts with stdin plan input; supply --plan-file or --report-file when using stdin for the prior body")
+	}
+
 	priorRegions, err := loadPreviousBody(flagPreviousBodyFile, cfg.Output.PreserveStrict)
 	if err != nil {
 		return err

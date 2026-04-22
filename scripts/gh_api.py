@@ -259,6 +259,18 @@ def do_fetch_body(args: argparse.Namespace) -> int:
     return 0
 
 
+def strip_marker_prefix(body: str, marker: str) -> str:
+    """Remove the leading `<!-- <marker> -->\\n` tag from a sticky-comment
+    body so the emitted content is ready to feed into --previous-body-file.
+
+    Safe no-op when the body does not start with the tag (e.g. a comment
+    authored by hand that doesn't follow the sticky convention)."""
+    tag = f"<!-- {marker} -->\n"
+    if body.startswith(tag):
+        return body[len(tag):]
+    return body
+
+
 def do_fetch_comment(args: argparse.Namespace) -> int:
     if not args.github_token:
         print("::error::--github-token is required for --fetch-comment", file=sys.stderr)
@@ -278,11 +290,7 @@ def do_fetch_comment(args: argparse.Namespace) -> int:
         write_output("", args.output)
         return 0
     body = (existing.get("body") or "").replace("\r", "")
-    # Strip the marker tag itself so the output is just the content.
-    tag = f"<!-- {args.marker} -->\n"
-    if body.startswith(tag):
-        body = body[len(tag):]
-    write_output(body, args.output)
+    write_output(strip_marker_prefix(body, args.marker), args.output)
     return 0
 
 

@@ -144,6 +144,27 @@ output:
 	}
 }
 
+func TestParse_preserveStrict(t *testing.T) {
+	t.Run("true", func(t *testing.T) {
+		cfg, err := Parse([]byte("output:\n  preserve_strict: true\n"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !cfg.Output.PreserveStrict {
+			t.Error("preserve_strict: true should parse to cfg.Output.PreserveStrict == true")
+		}
+	})
+	t.Run("default false", func(t *testing.T) {
+		cfg, err := Parse([]byte("output: {}\n"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if cfg.Output.PreserveStrict {
+			t.Error("unset preserve_strict should default to false")
+		}
+	})
+}
+
 func TestAttributeImpactResolution(t *testing.T) {
 	cfg := Config{
 		GlobalAttributes: map[string]AttributeConfig{

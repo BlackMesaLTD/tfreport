@@ -104,5 +104,30 @@ class SpliceTests(unittest.TestCase):
         self.assertIn("snippet", out)
 
 
+class MarkerStripTests(unittest.TestCase):
+    def test_strips_matching_prefix(self) -> None:
+        body = "<!-- TFREPORT -->\n- [x] content"
+        self.assertEqual(
+            gh_api.strip_marker_prefix(body, "TFREPORT"),
+            "- [x] content",
+        )
+
+    def test_passthrough_when_no_prefix(self) -> None:
+        body = "- [x] content without the tag"
+        self.assertEqual(gh_api.strip_marker_prefix(body, "TFREPORT"), body)
+
+    def test_passthrough_on_different_marker(self) -> None:
+        body = "<!-- OTHER -->\n- [x] content"
+        # Tag present but for a different marker name → leave it.
+        self.assertEqual(gh_api.strip_marker_prefix(body, "TFREPORT"), body)
+
+    def test_only_strips_leading_occurrence(self) -> None:
+        body = "<!-- TFREPORT -->\n- [x] content\n<!-- TFREPORT -->\n trailing"
+        got = gh_api.strip_marker_prefix(body, "TFREPORT")
+        self.assertTrue(got.startswith("- [x] content"))
+        # The trailing occurrence is preserved verbatim — we only strip a prefix.
+        self.assertIn("<!-- TFREPORT -->\n trailing", got)
+
+
 if __name__ == "__main__":
     unittest.main()

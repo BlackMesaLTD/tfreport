@@ -78,6 +78,28 @@ func TestLoadPreviousBody_missingFile(t *testing.T) {
 	}
 }
 
+// TestExecute_stdinConflictRejected verifies the guard against consuming
+// stdin for both --previous-body-file=- and the plan input path.
+func TestExecute_stdinConflictRejected(t *testing.T) {
+	defer func() {
+		flagPreviousBodyFile = ""
+		flagPlanFile = ""
+		flagReportFiles = nil
+		flagConfig = ""
+		flagTarget = "markdown"
+		flagQuiet = false
+	}()
+
+	rootCmd.SetArgs([]string{"--previous-body-file", "-", "--target", "markdown"})
+	err := rootCmd.Execute()
+	if err == nil {
+		t.Fatal("want error when --previous-body-file=- is combined with stdin plan input")
+	}
+	if !strings.Contains(err.Error(), "conflicts with stdin plan input") {
+		t.Errorf("want actionable error message; got: %v", err)
+	}
+}
+
 // TestExecute_previousBodyRoundTrip exercises the full CLI path: render once
 // with a custom template emitting a preserve region, save stdout as a "prior
 // body", tick the checkbox by hand, re-render with --previous-body-file, and
