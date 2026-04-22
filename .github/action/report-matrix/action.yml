@@ -102,7 +102,7 @@ runs:
         } >> "$GITHUB_OUTPUT"
 
     - name: Download artifacts
-      uses: actions/download-artifact@v4
+      uses: actions/download-artifact@v6
       continue-on-error: true
       with:
         pattern: ${{ inputs.artifact-pattern }}

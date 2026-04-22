@@ -17,7 +17,7 @@ jobs:
     # and we don't want a misleading red CI line for external contributors.
     if: github.event.pull_request.head.repo.full_name == github.repository
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           # Check out the PR head, not the detached merge commit, so we
           # can push back to the PR branch.
@@ -25,7 +25,7 @@ jobs:
           # stefanzweifel/git-auto-commit-action needs the full ref
           # history for its diff/commit handling.
           fetch-depth: 0
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
       - name: Regenerate docs/blocks.md
@@ -34,7 +34,7 @@ jobs:
         # Floating major-version ref matches the convention in
         # test.yml and release.yml. Pin to a SHA if supply-chain
         # tightening is desired later.
-        uses: stefanzweifel/git-auto-commit-action@v5
+        uses: stefanzweifel/git-auto-commit-action@v7
         with:
           commit_message: "docs: regenerate blocks.md"
           file_pattern: docs/blocks.md

@@ -4,10 +4,20 @@
 # carry its own copy of the install logic.
 #
 # Inputs (env vars):
-#   TFREPORT_VERSION  — version tag (e.g. "v0.0.5") or "latest" (default).
+#   TFREPORT_VERSION       — version tag (e.g. "v0.0.5") or "latest" (default).
+#   TFREPORT_SKIP_INSTALL  — when "1" AND `tfreport` already resolves on PATH,
+#                            skip the download entirely and use the pre-
+#                            installed binary. ci.yml action-smoke jobs use
+#                            this to test the PR-branch-built binary rather
+#                            than the last released one. Unset in production.
 #
 # Exits non-zero on any failure (curl, checksum mismatch, tar extract).
 set -euo pipefail
+
+if [ "${TFREPORT_SKIP_INSTALL:-}" = "1" ] && command -v tfreport >/dev/null 2>&1; then
+  echo "Using pre-installed tfreport: $(command -v tfreport)"
+  exit 0
+fi
 
 VERSION="${TFREPORT_VERSION:-latest}"
 if [ "$VERSION" = "latest" ]; then
