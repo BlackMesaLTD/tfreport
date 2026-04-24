@@ -409,7 +409,7 @@ Generic tree-query-backed markdown table. Select nodes via a path, optionally fi
 
 | Name | Type | Default | Description |
 |------|------|---------|-------------|
-| `source` | `string` | — | Path selector — e.g. `"resource"` or `"module_instance > resource"`. Required. See `core.ParsePath` for grammar. |
+| `source` | `string` | — | Path selector — e.g. `"resource"`, `"module_instance"`, `"report"`, or chained like `"module_instance > resource"`. Required. See `core.ParsePath` for grammar. |
 | `where` | `string` | — | HCL predicate. Drops nodes where it evaluates false. `self` binds to each candidate. |
 | `sort` | `string` | — | HCL expression yielding a string or number per node. Stable sort. |
 | `desc` | `bool` | false | Reverse sort direction. |
@@ -417,6 +417,7 @@ Generic tree-query-backed markdown table. Select nodes via a path, optionally fi
 | `columns` | `csv` | (kind-dependent) | Ordered column ids. Valid ids depend on the row kind (the final Path step). |
 | `heading` | `string` | — | Inserts `### heading` above the table when non-empty. |
 | `empty` | `string` | — | Rendered when zero rows match. Blank by default — caller's template handles absence. |
+| `report` | `*core.Report` | (all reports) | Scope the query to one report's subtree. Accepts `$r` inside a `{{ range .Reports }}` loop — matches the legacy `modules_table "report" $r` convention so existing templates migrate with minimal rewiring. |
 
 **Columns** (for the `columns` csv arg):
 
@@ -426,6 +427,13 @@ Generic tree-query-backed markdown table. Select nodes via a path, optionally fi
 | `attribute:key` | Attribute | The attribute key, rendered inline-code. |
 | `key_change:impact` | Impact | Emoji + lowercase impact level for the worst resource covered by the sentence. |
 | `key_change:text` | Change | Plain-English summary sentence from the summarizer. |
+| `module_instance:actions` | Actions | Canonical action summary line (e.g. `2 update, 1 create`). |
+| `module_instance:module` | Module | Leaf module-call name with instance bracket when present, backticked. Equivalent to legacy `modules_table` `module` column. |
+| `module_instance:resources` | Resources | Count of resource descendants under this instance (pre-rolled from the tree). |
+| `report:actions` | Actions | Canonical action-summary line (e.g. `2 create, 1 update, 1 delete`). |
+| `report:impact` | Impact | Worst impact for the report with emoji prefix. |
+| `report:resources` | Resources | `*core.Report.TotalResources` (non-read resource count). |
+| `report:subscription` | Subscription | Report label or `default` when unlabelled. |
 | `resource:action` | Action | Emoji + lowercase action name (create, update, delete, replace, read). |
 | `resource:address` | Resource | Full terraform address, rendered as `inline code`. |
 | `resource:impact` | Impact | Emoji + lowercase impact level (critical, high, medium, low, none). |
