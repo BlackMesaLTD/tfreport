@@ -3,7 +3,6 @@ package blocks
 import (
 	"fmt"
 	"sort"
-	"strings"
 
 	"github.com/BlackMesaLTD/tfreport/internal/core"
 )
@@ -113,6 +112,9 @@ func renderActionRow(row actionRow, col string) string {
 }
 
 // renderActionTable produces a table with one row per action type.
+// Action grouping aggregates tree resources by their Action enum; the
+// resulting rows aren't tree nodes, so we build them ourselves and
+// delegate byte assembly to renderMarkdownTable for uniformity.
 func renderActionTable(ctx *BlockContext, columns []string, hideEmpty bool) (string, error) {
 	r := currentReport(ctx)
 	if r == nil {
@@ -125,23 +127,19 @@ func renderActionTable(ctx *BlockContext, columns []string, hideEmpty bool) (str
 	}
 
 	order := []core.Action{core.ActionCreate, core.ActionUpdate, core.ActionDelete, core.ActionReplace, core.ActionRead}
-
-	var b strings.Builder
-	headings := mapSlice(cols, func(id string) string { return summaryActionHeadings[id] })
-	writeColumnHeader(&b, headings)
+	rows := make([]actionRow, 0, len(order))
 	for _, a := range order {
 		c := r.ActionCounts[a]
 		if hideEmpty && c == 0 {
 			continue
 		}
-		row := actionRow{action: a, count: c}
-		b.WriteString("|")
-		for _, col := range cols {
-			fmt.Fprintf(&b, " %s |", renderActionRow(row, col))
-		}
-		b.WriteString("\n")
+		rows = append(rows, actionRow{action: a, count: c})
 	}
-	return strings.TrimRight(b.String(), "\n"), nil
+
+	headings := mapSlice(cols, func(id string) string { return summaryActionHeadings[id] })
+	return renderMarkdownTable(len(rows), headings, cols, func(i int, col string) string {
+		return renderActionRow(rows[i], col)
+	}, tableRenderOpts{}), nil
 }
 
 // --- resource_type grouping ---
@@ -220,21 +218,15 @@ func renderResourceTypeTable(ctx *BlockContext, columns []string, hideEmpty bool
 		truncated = true
 	}
 
-	var b strings.Builder
 	headings := mapSlice(cols, func(id string) string { return summaryResourceTypeHeadings[id] })
-	writeColumnHeader(&b, headings)
-	for _, t := range kept {
-		rr := rows[t]
-		b.WriteString("|")
-		for _, col := range cols {
-			fmt.Fprintf(&b, " %s |", renderResourceTypeRow(ctx, rr, col))
-		}
-		b.WriteString("\n")
-	}
+	opts := tableRenderOpts{}
 	if truncated {
-		fmt.Fprintf(&b, "\n_... %d more resource types_\n", total-max)
+		opts.TruncatedCount = total - max
+		opts.TruncationLine = fmt.Sprintf("_... %d more resource types_", opts.TruncatedCount)
 	}
-	return strings.TrimRight(b.String(), "\n"), nil
+	return renderMarkdownTable(len(kept), headings, cols, func(i int, col string) string {
+		return renderResourceTypeRow(ctx, rows[kept[i]], col)
+	}, opts), nil
 }
 
 // describeActions renders the Actions cell for a resource-type row. When all
@@ -424,20 +416,15 @@ func renderModuleTypeTable(ctx *BlockContext, columns []string, hideEmpty bool, 
 		cols = removeColumn(cols, "description")
 	}
 
-	var b strings.Builder
 	headings := mapSlice(cols, func(id string) string { return summaryModuleTypeHeadings[id] })
-	writeColumnHeader(&b, headings)
-	for _, rr := range rows {
-		b.WriteString("|")
-		for _, col := range cols {
-			fmt.Fprintf(&b, " %s |", renderModuleTypeRow(rr, col))
-		}
-		b.WriteString("\n")
-	}
+	opts := tableRenderOpts{}
 	if truncated {
-		fmt.Fprintf(&b, "\n_... %d more module types_\n", total-max)
+		opts.TruncatedCount = total - max
+		opts.TruncationLine = fmt.Sprintf("_... %d more module types_", opts.TruncatedCount)
 	}
-	return strings.TrimRight(b.String(), "\n"), nil
+	return renderMarkdownTable(len(rows), headings, cols, func(i int, col string) string {
+		return renderModuleTypeRow(rows[i], col)
+	}, opts), nil
 }
 
 // --- module grouping ---
@@ -487,20 +474,15 @@ func renderModuleTable(ctx *BlockContext, columns []string, hideEmpty bool, max 
 		truncated = true
 	}
 
-	var b strings.Builder
 	headings := mapSlice(cols, func(id string) string { return summaryModuleHeadings[id] })
-	writeColumnHeader(&b, headings)
-	for _, mg := range kept {
-		b.WriteString("|")
-		for _, col := range cols {
-			fmt.Fprintf(&b, " %s |", renderModuleRow(mg, col))
-		}
-		b.WriteString("\n")
-	}
+	opts := tableRenderOpts{}
 	if truncated {
-		fmt.Fprintf(&b, "\n_... %d more modules_\n", total-max)
+		opts.TruncatedCount = total - max
+		opts.TruncationLine = fmt.Sprintf("_... %d more modules_", opts.TruncatedCount)
 	}
-	return strings.TrimRight(b.String(), "\n"), nil
+	return renderMarkdownTable(len(kept), headings, cols, func(i int, col string) string {
+		return renderModuleRow(kept[i], col)
+	}, opts), nil
 }
 
 // --- subscription grouping ---
@@ -588,29 +570,19 @@ func renderSubscriptionTable(ctx *BlockContext, columns []string, hideEmpty bool
 		truncated = true
 	}
 
-	var b strings.Builder
 	headings := mapSlice(cols, func(id string) string { return summarySubscriptionHeadings[id] })
-	writeColumnHeader(&b, headings)
-	for _, r := range kept {
-		b.WriteString("|")
-		for _, col := range cols {
-			// pr-comment's 'impact' column traditionally rendered the plain
-			// string (no emoji). Preserve that by swapping the renderer key
-			// when we detect the pr-comment default shape.
-			rendered := ""
-			if prComment && col == "impact" {
-				rendered = renderSubscriptionRow(r, "impact_plain")
-			} else {
-				rendered = renderSubscriptionRow(r, col)
-			}
-			fmt.Fprintf(&b, " %s |", rendered)
-		}
-		b.WriteString("\n")
-	}
+	opts := tableRenderOpts{}
 	if truncated {
-		fmt.Fprintf(&b, "\n_... %d more subscriptions_\n", total-max)
+		opts.TruncatedCount = total - max
+		opts.TruncationLine = fmt.Sprintf("_... %d more subscriptions_", opts.TruncatedCount)
 	}
-	return strings.TrimRight(b.String(), "\n"), nil
+	return renderMarkdownTable(len(kept), headings, cols, func(i int, col string) string {
+		// pr-comment's 'impact' column historically dropped the emoji.
+		if prComment && col == "impact" {
+			return renderSubscriptionRow(kept[i], "impact_plain")
+		}
+		return renderSubscriptionRow(kept[i], col)
+	}, opts), nil
 }
 
 // deriveFilteredCtx produces a BlockContext whose Report (single mode)

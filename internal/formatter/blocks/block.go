@@ -95,6 +95,13 @@ type OutputOptions struct {
 	StepSummaryMaxKB      int
 	CodeFormat            string
 
+	// AttributeValueTruncate caps the character length of attribute
+	// before/after cells rendered by the Attribute-kind `old` and `new`
+	// columns. 0 means no truncation; attribute_diff sets it from its
+	// `truncate` arg before delegating to renderTable so columns stay
+	// stateless. Negative values are treated as 0.
+	AttributeValueTruncate int
+
 	// ChangedAttrsDisplay picks how the per-resource "Changed" cell renders
 	// for create and delete actions (update/replace always render the
 	// keys-list). Valid values: "dash" (default), "wordy" (new/removed),

@@ -317,7 +317,76 @@ func attributeColumns() map[string]tableColumn {
 				return a.Description
 			},
 		},
+		"old": {
+			Heading:     "Before",
+			Description: "Before value, JSON-encoded and truncated to ctx.Output.AttributeValueTruncate chars. `—` for nil. Matches legacy attribute_diff `old` column.",
+			Render: func(ctx *BlockContext, n *core.Node) string {
+				a, _ := n.Payload.(*core.ChangedAttribute)
+				if a == nil {
+					return ""
+				}
+				return renderAttrValue(a.OldValue, ctx.Output.AttributeValueTruncate, false)
+			},
+		},
+		"new": {
+			Heading:     "After",
+			Description: "After value, JSON-encoded and truncated. `(known after apply)` for computed; `—` for nil. Matches legacy attribute_diff `new` column.",
+			Render: func(ctx *BlockContext, n *core.Node) string {
+				a, _ := n.Payload.(*core.ChangedAttribute)
+				if a == nil {
+					return ""
+				}
+				return renderAttrValue(a.NewValue, ctx.Output.AttributeValueTruncate, a.Computed)
+			},
+		},
+		"impact": {
+			Heading:     "Impact",
+			Description: "Impact of the enclosing resource, with emoji + optional note (walks up to the Resource parent).",
+			Render: func(ctx *BlockContext, n *core.Node) string {
+				rc := enclosingResource(n)
+				if rc == nil {
+					return ""
+				}
+				return formatImpactWithNote(ctx, *rc)
+			},
+		},
+		"address": {
+			Heading:     "Address",
+			Description: "Full terraform address of the enclosing resource, backticked.",
+			Render: func(_ *BlockContext, n *core.Node) string {
+				rc := enclosingResource(n)
+				if rc == nil {
+					return ""
+				}
+				return "`" + rc.Address + "`"
+			},
+		},
+		"resource_type": {
+			Heading:     "Resource Type",
+			Description: "Display name for the enclosing resource's type.",
+			Render: func(ctx *BlockContext, n *core.Node) string {
+				rc := enclosingResource(n)
+				if rc == nil {
+					return ""
+				}
+				return displayName(ctx, rc.ResourceType)
+			},
+		},
 	}
+}
+
+// enclosingResource walks up from an Attribute node to find its parent
+// Resource and returns that Resource's ChangedAttribute payload's
+// enclosing ResourceChange. Returns nil when no Resource ancestor or
+// when the node isn't attached to one.
+func enclosingResource(n *core.Node) *core.ResourceChange {
+	for p := n.Parent; p != nil; p = p.Parent {
+		if p.Kind == core.KindResource {
+			rc, _ := p.Payload.(*core.ResourceChange)
+			return rc
+		}
+	}
+	return nil
 }
 
 // --- ModuleInstance columns (legacy modules_table equivalent) ---

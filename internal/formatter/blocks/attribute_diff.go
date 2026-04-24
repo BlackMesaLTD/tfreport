@@ -98,12 +98,43 @@ func (AttributeDiff) Render(ctx *BlockContext, args map[string]any) (string, err
 		return "", nil
 	}
 
-	var attrIdx map[string]*core.Node
-	if whereExpr != nil {
-		attrIdx = attributeNodeIndex(ctx, r)
+	// Ensure ctx has a tree; Attribute columns walk Parent to reach
+	// their enclosing Resource, and the shared renderTable path
+	// expects a populated tree for any column lookups.
+	inner := ctx
+	if inner.Tree == nil || inner.Tree.Root == nil {
+		cp := *ctx
+		cp.Tree = core.BuildTree(r)
+		inner = &cp
+	}
+	// Thread the user-supplied truncate through ctx so Attribute `old`
+	// / `new` columns (stateless Render signatures) can read it.
+	if truncate != inner.Output.AttributeValueTruncate {
+		cp := *inner
+		cp.Output.AttributeValueTruncate = truncate
+		inner = &cp
 	}
 
-	var rows []attrDiffRow
+	var attrIdx map[string]*core.Node
+	if whereExpr != nil {
+		attrIdx = attributeNodeIndex(inner, r)
+	}
+
+	// Collect surviving (rc, attr, node) tuples. Node is populated for
+	// the table-format delegation; list/inline formats still need (rc,
+	// attr) because they render inline without a shared helper.
+	type survivor struct {
+		rc   core.ResourceChange
+		attr core.ChangedAttribute
+		node *core.Node
+	}
+	var rows []survivor
+
+	attrNodesByKey := attrIdx
+	if attrNodesByKey == nil && format == "table" {
+		attrNodesByKey = attributeNodeIndex(inner, r)
+	}
+
 	for _, mg := range r.ModuleGroups {
 		for _, rc := range mg.Changes {
 			if _, ok := actions[rc.Action]; !ok {
@@ -122,7 +153,11 @@ func (AttributeDiff) Render(ctx *BlockContext, args map[string]any) (string, err
 				if !keep {
 					continue
 				}
-				rows = append(rows, attrDiffRow{rc: rc, attr: attr})
+				var node *core.Node
+				if attrNodesByKey != nil {
+					node = attrNodesByKey[rc.Address+"|"+attr.Key]
+				}
+				rows = append(rows, survivor{rc: rc, attr: attr, node: node})
 			}
 		}
 	}
@@ -137,22 +172,34 @@ func (AttributeDiff) Render(ctx *BlockContext, args map[string]any) (string, err
 		rows = rows[:max]
 	}
 
-	var b strings.Builder
 	switch format {
 	case "table":
-		headings := mapSlice(cols, func(id string) string { return attributeDiffHeadings[id] })
-		writeColumnHeader(&b, headings)
+		// Delegate markdown assembly to renderTable — same code path as
+		// every other table block since the unification PR.
+		nodes := make([]*core.Node, 0, len(rows))
 		for _, row := range rows {
-			b.WriteString("|")
-			for _, col := range cols {
-				fmt.Fprintf(&b, " %s |", renderAttrDiffCell(ctx, row, col, truncate))
+			if row.node != nil {
+				nodes = append(nodes, row.node)
 			}
-			b.WriteString("\n")
 		}
+		if len(nodes) == 0 {
+			return "", nil
+		}
+		headings := map[string]string{}
+		for _, id := range cols {
+			headings[id] = attributeDiffHeadings[id]
+		}
+		trLine := ""
 		if truncated > 0 {
-			fmt.Fprintf(&b, "\n_... %d more attributes_\n", truncated)
+			trLine = fmt.Sprintf("_... %d more attributes_", truncated)
 		}
+		return renderTable(inner, nodes, core.KindAttribute, cols, tableRenderOpts{
+			HeadingOverrides: headings,
+			TruncatedCount:   truncated,
+			TruncationLine:   trLine,
+		})
 	case "list":
+		var b strings.Builder
 		for _, row := range rows {
 			fmt.Fprintf(&b, "- **%s**: %s → %s\n",
 				row.attr.Key,
@@ -162,6 +209,7 @@ func (AttributeDiff) Render(ctx *BlockContext, args map[string]any) (string, err
 		if truncated > 0 {
 			fmt.Fprintf(&b, "- _... %d more attributes_\n", truncated)
 		}
+		return strings.TrimRight(b.String(), "\n"), nil
 	case "inline":
 		parts := make([]string, 0, len(rows))
 		for _, row := range rows {
@@ -176,30 +224,7 @@ func (AttributeDiff) Render(ctx *BlockContext, args map[string]any) (string, err
 		}
 		return out, nil
 	}
-	return strings.TrimRight(b.String(), "\n"), nil
-}
-
-func renderAttrDiffCell(ctx *BlockContext, row attrDiffRow, col string, truncate int) string {
-	switch col {
-	case "key":
-		return "`" + row.attr.Key + "`"
-	case "old":
-		return renderAttrValue(row.attr.OldValue, truncate, false)
-	case "new":
-		return renderAttrValue(row.attr.NewValue, truncate, row.attr.Computed)
-	case "description":
-		if row.attr.Description == "" {
-			return "—"
-		}
-		return row.attr.Description
-	case "impact":
-		return formatImpactWithNote(ctx, row.rc)
-	case "address":
-		return "`" + row.rc.Address + "`"
-	case "resource_type":
-		return displayName(ctx, row.rc.ResourceType)
-	}
-	return ""
+	return "", nil
 }
 
 // renderAttrValue renders a before/after value for a markdown table cell.
