@@ -110,6 +110,7 @@ func (e *Engine) buildFuncMap(ctx *blocks.BlockContext) template.FuncMap {
 		}
 	}
 
+	funcs["table"] = blockFunc("table")
 	funcs["summary_table"] = blockFunc("summary_table")
 	funcs["key_changes"] = blockFunc("key_changes")
 	funcs["instance_detail"] = blockFunc("instance_detail")
