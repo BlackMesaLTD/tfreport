@@ -111,6 +111,35 @@ func TestEval_CountOnBadTypeErrors(t *testing.T) {
 	}
 }
 
+func TestEval_Contains(t *testing.T) {
+	// Terraform-stdlib-compatible: contains([list], value) -> bool.
+	cases := []struct {
+		expr string
+		want bool
+	}{
+		{`contains(["critical", "high"], "critical")`, true},
+		{`contains(["critical", "high"], "medium")`, false},
+		{`contains([], "anything")`, false},
+		{`contains(["a", "b", "c"], "b")`, true},
+	}
+	for _, c := range cases {
+		v, err := Eval(MustParseExpr(c.expr), nil, nil)
+		if err != nil {
+			t.Fatalf("eval %q: %v", c.expr, err)
+		}
+		if v.True() != c.want {
+			t.Errorf("%s = %v, want %v", c.expr, v.True(), c.want)
+		}
+	}
+}
+
+func TestEval_ContainsOnBadTypeErrors(t *testing.T) {
+	_, err := Eval(MustParseExpr(`contains("not a list", "x")`), nil, nil)
+	if err == nil {
+		t.Fatal("expected error for non-collection first arg")
+	}
+}
+
 func TestEval_FingerprintStable(t *testing.T) {
 	e := MustParseExpr(`fingerprint("abc")`)
 	a, _ := Eval(e, nil, nil)

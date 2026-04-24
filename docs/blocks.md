@@ -76,6 +76,7 @@ Per-resource impact table with pluggable columns and multi-axis filtering.
 | `module_types` | `csv` | (all) | Filter: keep rows whose resolved module type matches. |
 | `resource_types` | `csv` | (all) | Filter: keep rows whose ResourceType matches exactly. |
 | `is_import` | `string` | (both) | `true` keeps only imports, `false` only non-imports, empty keeps both. |
+| `where` | `string` | — | HCL predicate evaluated per resource (`self` bound to the tree node). Composes AND with the CSV filters. Idiomatic for terraform users — e.g. `contains(["critical", "high"], self.impact) && !self.is_import`. See `core.NodeValue` for the `self` field set and `core.DefaultFunctions` for registered functions. |
 | `max` | `int` | 0 (no limit) | Cap number of rows; truncated rows collapse into `… N more resources`. |
 | `changed_attrs_display` | `string` | (cfg.Output.ChangedAttrsDisplay or `dash`) | Render mode for the `changed` column on create/delete rows: `dash` (—), `wordy` (new/removed), `count` (N attrs), `list` (legacy full keys-list). Update/replace always show backticked keys. |
 

@@ -1720,25 +1720,197 @@ func TestModuleDetails_maxTruncates(t *testing.T) {
 
 func crtReport() *core.Report {
 	// Two modules, six resources with varied action/impact/type/is_import.
+	// rc.ModulePath populated (matches production output of the grouper)
+	// so both tree and fallback collectors find the enclosing mg.
 	return syntheticReport("prod",
 		core.ModuleGroup{
 			Name: "vnet", Path: "module.vnet",
 			Changes: []core.ResourceChange{
-				{Address: "module.vnet.azurerm_subnet.app", ResourceType: "azurerm_subnet", ResourceName: "app", Action: core.ActionUpdate, Impact: core.ImpactMedium, ChangedAttributes: []core.ChangedAttribute{{Key: "tags"}}},
-				{Address: "module.vnet.azurerm_subnet.db", ResourceType: "azurerm_subnet", ResourceName: "db", Action: core.ActionDelete, Impact: core.ImpactHigh, ChangedAttributes: []core.ChangedAttribute{{Key: "name"}}},
-				{Address: "module.vnet.azurerm_vnet.main", ResourceType: "azurerm_virtual_network", ResourceName: "main", Action: core.ActionUpdate, Impact: core.ImpactLow, IsImport: true, ChangedAttributes: []core.ChangedAttribute{{Key: "tags"}}},
+				{Address: "module.vnet.azurerm_subnet.app", ModulePath: "module.vnet", ResourceType: "azurerm_subnet", ResourceName: "app", Action: core.ActionUpdate, Impact: core.ImpactMedium, ChangedAttributes: []core.ChangedAttribute{{Key: "tags"}}},
+				{Address: "module.vnet.azurerm_subnet.db", ModulePath: "module.vnet", ResourceType: "azurerm_subnet", ResourceName: "db", Action: core.ActionDelete, Impact: core.ImpactHigh, ChangedAttributes: []core.ChangedAttribute{{Key: "name"}}},
+				{Address: "module.vnet.azurerm_vnet.main", ModulePath: "module.vnet", ResourceType: "azurerm_virtual_network", ResourceName: "main", Action: core.ActionUpdate, Impact: core.ImpactLow, IsImport: true, ChangedAttributes: []core.ChangedAttribute{{Key: "tags"}}},
 			},
 			ActionCounts: map[core.Action]int{core.ActionUpdate: 2, core.ActionDelete: 1},
 		},
 		core.ModuleGroup{
 			Name: "nsg", Path: "module.nsg",
 			Changes: []core.ResourceChange{
-				{Address: "module.nsg.azurerm_nsg.web", ResourceType: "azurerm_network_security_group", ResourceName: "web", Action: core.ActionReplace, Impact: core.ImpactCritical, ChangedAttributes: []core.ChangedAttribute{{Key: "rules"}}},
-				{Address: "module.nsg.azurerm_route.old", ResourceType: "azurerm_route", ResourceName: "old", Action: core.ActionDelete, Impact: core.ImpactHigh, ChangedAttributes: []core.ChangedAttribute{{Key: "next_hop"}}},
+				{Address: "module.nsg.azurerm_nsg.web", ModulePath: "module.nsg", ResourceType: "azurerm_network_security_group", ResourceName: "web", Action: core.ActionReplace, Impact: core.ImpactCritical, ChangedAttributes: []core.ChangedAttribute{{Key: "rules"}}},
+				{Address: "module.nsg.azurerm_route.old", ModulePath: "module.nsg", ResourceType: "azurerm_route", ResourceName: "old", Action: core.ActionDelete, Impact: core.ImpactHigh, ChangedAttributes: []core.ChangedAttribute{{Key: "next_hop"}}},
 			},
 			ActionCounts: map[core.Action]int{core.ActionReplace: 1, core.ActionDelete: 1},
 		},
 	)
+}
+
+// TestChangedResourcesTable_WhereSimplePredicate verifies the HCL
+// `where=` arg picks the expected rows on its own (no CSV filters).
+// Uses the canonical "impact in [...]" idiom a terraform user would
+// naturally write.
+func TestChangedResourcesTable_WhereSimplePredicate(t *testing.T) {
+	r := crtReport()
+	ctx := &BlockContext{Target: "markdown", Report: r, Tree: core.BuildTree(r)}
+
+	out, err := (ChangedResourcesTable{}).Render(ctx, map[string]any{
+		"actions": "all",
+		"where":   `self.impact == "critical"`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "web") {
+		t.Errorf("want nsg.web (critical) in output:\n%s", out)
+	}
+	for _, drop := range []string{"app", "db", "main", "old"} {
+		if strings.Contains(out, drop) {
+			t.Errorf("non-critical row %q should be filtered out:\n%s", drop, out)
+		}
+	}
+}
+
+// TestChangedResourcesTable_WhereContainsIdiom exercises the
+// terraform-stdlib `contains()` function — the idiom terraform users
+// reach for when they want "x is one of [a, b, c]" without writing an
+// `||` chain. The function is registered in core.DefaultFunctions.
+func TestChangedResourcesTable_WhereContainsIdiom(t *testing.T) {
+	r := crtReport()
+	ctx := &BlockContext{Target: "markdown", Report: r, Tree: core.BuildTree(r)}
+
+	out, err := (ChangedResourcesTable{}).Render(ctx, map[string]any{
+		"actions": "all",
+		"where":   `contains(["critical", "high"], self.impact) && !self.is_import`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// db (high, not import), web (critical, not import), old (high, not import) — keep
+	// main (low, import) — drop on both legs
+	// app (medium) — drop on impact
+	for _, keep := range []string{"db", "web", "old"} {
+		if !strings.Contains(out, keep) {
+			t.Errorf("expected %q in output:\n%s", keep, out)
+		}
+	}
+	for _, drop := range []string{"app", "main"} {
+		if strings.Contains(out, drop) {
+			t.Errorf("%q should be filtered out:\n%s", drop, out)
+		}
+	}
+}
+
+// TestChangedResourcesTable_WhereComposesWithCSV confirms CSV filters
+// and the HCL predicate AND together — a row must satisfy both.
+func TestChangedResourcesTable_WhereComposesWithCSV(t *testing.T) {
+	r := crtReport()
+	ctx := &BlockContext{Target: "markdown", Report: r, Tree: core.BuildTree(r)}
+
+	// CSV narrows to vnet module; where narrows to update action.
+	// Intersection: vnet + update = app (update/medium) and main (update/low, import)
+	out, err := (ChangedResourcesTable{}).Render(ctx, map[string]any{
+		"actions": "all",
+		"modules": "vnet",
+		"where":   `self.action == "update"`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, keep := range []string{"app", "main"} {
+		if !strings.Contains(out, keep) {
+			t.Errorf("expected vnet+update row %q:\n%s", keep, out)
+		}
+	}
+	for _, drop := range []string{"db", "web", "old"} {
+		if strings.Contains(out, drop) {
+			t.Errorf("%q should be filtered out:\n%s", drop, out)
+		}
+	}
+}
+
+// TestChangedResourcesTable_WhereBadSyntaxErrors verifies that a
+// malformed predicate fails at parse time with a helpful error anchored
+// to the block name.
+func TestChangedResourcesTable_WhereBadSyntaxErrors(t *testing.T) {
+	r := crtReport()
+	ctx := &BlockContext{Target: "markdown", Report: r, Tree: core.BuildTree(r)}
+
+	_, err := (ChangedResourcesTable{}).Render(ctx, map[string]any{
+		"where": `self.impact ==`,
+	})
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if !strings.Contains(err.Error(), "changed_resources_table") {
+		t.Errorf("error should name the block: %v", err)
+	}
+}
+
+// TestChangedResourcesTable_WhereNonBoolErrors guards against a
+// predicate that returns a non-bool value — caught at eval time.
+func TestChangedResourcesTable_WhereNonBoolErrors(t *testing.T) {
+	r := crtReport()
+	ctx := &BlockContext{Target: "markdown", Report: r, Tree: core.BuildTree(r)}
+
+	_, err := (ChangedResourcesTable{}).Render(ctx, map[string]any{
+		"where": `self.address`, // returns a string
+	})
+	if err == nil {
+		t.Fatal("expected non-bool eval error")
+	}
+}
+
+// TestChangedResourcesTable_WhereWithoutTree confirms the block builds
+// a tree on-demand when `where=` is set but the context didn't supply
+// one. Users authoring from YAML won't know or care whether a tree is
+// bound; the block just works.
+func TestChangedResourcesTable_WhereWithoutTree(t *testing.T) {
+	r := crtReport()
+	ctx := &BlockContext{Target: "markdown", Report: r} // no Tree
+
+	out, err := (ChangedResourcesTable{}).Render(ctx, map[string]any{
+		"actions": "all",
+		"where":   `self.impact == "critical"`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "web") {
+		t.Errorf("want nsg.web row from tree-less context:\n%s", out)
+	}
+}
+
+// TestChangedResourcesTable_TreeAndFallbackProduceIdenticalOutput locks
+// in parity between the tree-backed collector and the legacy
+// ModuleGroups iteration. Any divergence in filter ordering, row
+// enumeration, or module-group lookup fails this test before any golden.
+func TestChangedResourcesTable_TreeAndFallbackProduceIdenticalOutput(t *testing.T) {
+	r := crtReport()
+	fallbackCtx := &BlockContext{Target: "markdown", Report: r}
+	treeCtx := &BlockContext{Target: "markdown", Report: r, Tree: core.BuildTree(r)}
+
+	cases := []map[string]any{
+		nil,
+		{"actions": "all"},
+		{"actions": "all", "impact": "critical,high"},
+		{"actions": "all", "modules": "vnet"},
+		{"actions": "all", "resource_types": "azurerm_subnet"},
+		{"actions": "all", "is_import": "true"},
+		{"actions": "all", "is_import": "false"},
+		{"actions": "all", "max": 3},
+		{"columns": "address,module,action", "actions": "all"},
+	}
+	for _, args := range cases {
+		fallback, err := (ChangedResourcesTable{}).Render(fallbackCtx, args)
+		if err != nil {
+			t.Fatalf("fallback args=%v: %v", args, err)
+		}
+		tree, err := (ChangedResourcesTable{}).Render(treeCtx, args)
+		if err != nil {
+			t.Fatalf("tree args=%v: %v", args, err)
+		}
+		if tree != fallback {
+			t.Errorf("tree/fallback divergence args=%v:\n--- tree ---\n%s\n--- fallback ---\n%s", args, tree, fallback)
+		}
+	}
 }
 
 func TestChangedResourcesTable_columnsSubset(t *testing.T) {
