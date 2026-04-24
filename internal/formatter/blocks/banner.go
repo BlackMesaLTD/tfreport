@@ -24,6 +24,15 @@ import (
 //	    `if_action_gt="delete:0,replace:0"` fires when either any delete or
 //	    any replace exists.
 //
+//	show_if string — HCL predicate evaluated once per report in scope
+//	    with `self` bound to the Report's tree root. Fires when the
+//	    predicate returns true for ANY report (matches the OR semantics
+//	    of the CSV triggers, so all three coexist cleanly). Examples:
+//
+//	        show_if: contains(["critical", "high"], self.max_impact)
+//	        show_if: self.action_counts.delete > 0 || self.action_counts.replace > 0
+//	        show_if: self.import_count > 5
+//
 // Rendering:
 //
 //	style string (alert|warn|success|info; default "alert")
@@ -60,8 +69,12 @@ func (Banner) Render(ctx *BlockContext, args map[string]any) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	showIf, err := parseWhereArg(argsRenamed(args, "show_if", "where"), "banner")
+	if err != nil {
+		return "", err
+	}
 
-	hasTriggers := impactTriggers != nil || len(actionGtTriggers) > 0
+	hasTriggers := impactTriggers != nil || len(actionGtTriggers) > 0 || showIf != nil
 	fire := !hasTriggers // no triggers → always fire
 
 	if !fire && impactTriggers != nil {
@@ -84,11 +97,80 @@ func (Banner) Render(ctx *BlockContext, args map[string]any) (string, error) {
 			}
 		}
 	}
+	if !fire && showIf != nil {
+		ok, err := bannerShowIfFires(ctx, showIf)
+		if err != nil {
+			return "", err
+		}
+		fire = ok
+	}
 	if !fire {
 		return "", nil
 	}
 
 	return fmt.Sprintf("%s **%s**", icon, text), nil
+}
+
+// argsRenamed returns a copy of args with `from` renamed to `to`. Used
+// so parseWhereArg (which expects the key "where") can read a block's
+// differently-named predicate arg without a bespoke parse helper.
+func argsRenamed(args map[string]any, from, canonical string) map[string]any {
+	if v, ok := args[from]; ok && v != nil {
+		cp := make(map[string]any, len(args))
+		for k, val := range args {
+			cp[k] = val
+		}
+		cp[canonical] = v
+		return cp
+	}
+	return args
+}
+
+// bannerShowIfFires evaluates the predicate once per report in scope,
+// binding `self` to the Report's tree root. Returns true on the first
+// positive match (OR semantics across reports). Builds a tree on-demand
+// when ctx doesn't carry one.
+func bannerShowIfFires(ctx *BlockContext, expr *core.Expr) (bool, error) {
+	reports := allReports(ctx)
+	if len(reports) == 0 {
+		return false, nil
+	}
+	// Prefer the pre-built tree when available.
+	if ctx.Tree != nil && ctx.Tree.Root != nil {
+		reportNodes := []*core.Node{}
+		switch ctx.Tree.Root.Kind {
+		case core.KindReport:
+			reportNodes = append(reportNodes, ctx.Tree.Root)
+		case core.KindReports:
+			for _, c := range ctx.Tree.Root.Children {
+				if c.Kind == core.KindReport {
+					reportNodes = append(reportNodes, c)
+				}
+			}
+		}
+		for _, n := range reportNodes {
+			fires, err := core.EvalBool(expr, n, nil)
+			if err != nil {
+				return false, fmt.Errorf("banner: show_if: %w", err)
+			}
+			if fires {
+				return true, nil
+			}
+		}
+		return false, nil
+	}
+	// No tree bound — build per-report and evaluate.
+	for _, r := range reports {
+		root := core.BuildTree(r).Root
+		fires, err := core.EvalBool(expr, root, nil)
+		if err != nil {
+			return false, fmt.Errorf("banner: show_if: %w", err)
+		}
+		if fires {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func validBannerStyle(s string) bool {
@@ -150,6 +232,7 @@ func (Banner) Doc() BlockDoc {
 			{Name: "icon", Type: "string", Default: "(style-derived)", Description: "Override the leading emoji."},
 			{Name: "if_impact", Type: "csv", Default: "(none)", Description: "Fire when any report's MaxImpact is in the set (e.g. `critical,high`)."},
 			{Name: "if_action_gt", Type: "csv", Default: "(none)", Description: "Flat `action:N,action:N` syntax. Fire when action_count(action) > N."},
+			{Name: "show_if", Type: "string", Default: "(none)", Description: "HCL predicate evaluated per Report with `self` bound to the Report tree root. Fires when any report's evaluation is true. Composes OR with the CSV triggers. Idiomatic: `contains([\"critical\",\"high\"], self.max_impact)`, `self.action_counts.delete > 0`."},
 		},
 		Examples: []ExampleDoc{
 			{

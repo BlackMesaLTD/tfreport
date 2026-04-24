@@ -1774,6 +1774,225 @@ func crtReport() *core.Report {
 	)
 }
 
+// TestBanner_ShowIfFiresOnImpact verifies the HCL predicate replaces
+// the `if_impact` CSV trigger with the idiomatic terraform shape —
+// `contains([...], self.max_impact)` — and binds `self` to the Report
+// tree root.
+// bannerReport fabricates a Report whose tree aggregates actually
+// reflect the intended MaxImpact and ActionCounts. Tree aggregates
+// are rolled up from Resource children, so forcing fields on the
+// Report struct without matching ModuleGroups produces a tree whose
+// `self.max_impact` is "" — not what users expect.
+func bannerReport(label string, impact core.Impact, action core.Action) *core.Report {
+	changes := []core.ResourceChange{
+		{Address: label + "/a", ModulePath: "", ResourceType: "t", Action: action, Impact: impact},
+	}
+	return &core.Report{
+		Label:        label,
+		ModuleGroups: core.GroupByModule(changes),
+		MaxImpact:    impact,
+		ActionCounts: map[core.Action]int{action: 1},
+	}
+}
+
+func TestBanner_ShowIfFiresOnImpact(t *testing.T) {
+	r := bannerReport("prod", core.ImpactCritical, core.ActionReplace)
+	ctx := &BlockContext{Target: "markdown", Report: r, Tree: core.BuildTree(r)}
+
+	out, err := (Banner{}).Render(ctx, map[string]any{
+		"text":    "Critical changes present",
+		"show_if": `contains(["critical", "high"], self.max_impact)`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "Critical changes present") {
+		t.Errorf("expected banner to fire, got:\n%s", out)
+	}
+}
+
+func TestBanner_ShowIfNegativeStaysQuiet(t *testing.T) {
+	r := bannerReport("x", core.ImpactLow, core.ActionCreate)
+	ctx := &BlockContext{Target: "markdown", Report: r, Tree: core.BuildTree(r)}
+
+	out, err := (Banner{}).Render(ctx, map[string]any{
+		"text":    "Critical only",
+		"show_if": `self.max_impact == "critical"`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "" {
+		t.Errorf("banner should stay silent, got:\n%s", out)
+	}
+}
+
+func TestBanner_ShowIfComposesOrWithCSVTriggers(t *testing.T) {
+	// CSV trigger: if_action_gt "delete:0" — would NOT fire (no deletes).
+	// show_if: matches critical — DOES fire.
+	// Combined: should fire (OR semantics).
+	r := bannerReport("prod", core.ImpactCritical, core.ActionReplace)
+	ctx := &BlockContext{Target: "markdown", Report: r, Tree: core.BuildTree(r)}
+
+	out, err := (Banner{}).Render(ctx, map[string]any{
+		"text":         "Fires on either trigger",
+		"if_action_gt": "delete:0",
+		"show_if":      `self.max_impact == "critical"`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "Fires on either trigger") {
+		t.Errorf("either trigger should have fired:\n%s", out)
+	}
+}
+
+func TestBanner_ShowIfActionCounts(t *testing.T) {
+	// Natural terraform idiom — accessing action_counts through self.
+	// Three deletes drive action_counts.delete = 3 in the tree rollup.
+	changes := []core.ResourceChange{
+		{Address: "a", ModulePath: "", ResourceType: "t", Action: core.ActionDelete, Impact: core.ImpactHigh},
+		{Address: "b", ModulePath: "", ResourceType: "t", Action: core.ActionDelete, Impact: core.ImpactHigh},
+		{Address: "c", ModulePath: "", ResourceType: "t", Action: core.ActionDelete, Impact: core.ImpactHigh},
+	}
+	r := &core.Report{
+		ModuleGroups: core.GroupByModule(changes),
+		MaxImpact:    core.ImpactHigh,
+		ActionCounts: map[core.Action]int{core.ActionDelete: 3},
+	}
+	ctx := &BlockContext{Target: "markdown", Report: r, Tree: core.BuildTree(r)}
+
+	out, err := (Banner{}).Render(ctx, map[string]any{
+		"text":    "Deletions detected",
+		"show_if": `self.action_counts.delete > 0`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "Deletions detected") {
+		t.Errorf("banner should fire on action_counts.delete > 0:\n%s", out)
+	}
+}
+
+func TestBanner_ShowIfMultiReportOR(t *testing.T) {
+	// Two reports. One low, one critical. Banner should fire because
+	// at least one report matches.
+	ra := bannerReport("a", core.ImpactLow, core.ActionCreate)
+	rb := bannerReport("b", core.ImpactCritical, core.ActionReplace)
+	ctx := &BlockContext{
+		Target:  "markdown",
+		Reports: []*core.Report{ra, rb},
+		Tree:    core.BuildTree(ra, rb),
+	}
+
+	out, err := (Banner{}).Render(ctx, map[string]any{
+		"text":    "Any-critical fires",
+		"show_if": `self.max_impact == "critical"`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "Any-critical fires") {
+		t.Errorf("banner should fire when any report matches:\n%s", out)
+	}
+}
+
+func TestBanner_ShowIfBadSyntaxErrors(t *testing.T) {
+	r := bannerReport("x", core.ImpactLow, core.ActionCreate)
+	ctx := &BlockContext{Target: "markdown", Report: r, Tree: core.BuildTree(r)}
+
+	_, err := (Banner{}).Render(ctx, map[string]any{
+		"text":    "x",
+		"show_if": "self.max_impact ==",
+	})
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if !strings.Contains(err.Error(), "banner") {
+		t.Errorf("error should name the block: %v", err)
+	}
+}
+
+func TestRiskHistogram_WhereFiltersTally(t *testing.T) {
+	// Four resources; two are imports.
+	changes := []core.ResourceChange{
+		{Address: "a", ModulePath: "", ResourceType: "azurerm_subnet", Action: core.ActionUpdate, Impact: core.ImpactMedium},
+		{Address: "b", ModulePath: "", ResourceType: "azurerm_subnet", Action: core.ActionUpdate, Impact: core.ImpactHigh, IsImport: true},
+		{Address: "c", ModulePath: "", ResourceType: "azurerm_subnet", Action: core.ActionDelete, Impact: core.ImpactHigh},
+		{Address: "d", ModulePath: "", ResourceType: "azurerm_nsg", Action: core.ActionCreate, Impact: core.ImpactLow, IsImport: true},
+	}
+	r := &core.Report{ModuleGroups: core.GroupByModule(changes)}
+	ctx := &BlockContext{Target: "markdown", Report: r, Tree: core.BuildTree(r)}
+
+	out, err := (RiskHistogram{}).Render(ctx, map[string]any{
+		"style": "inline",
+		"where": "self.is_import",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Only 2 imports survive: one high (b), one low (d).
+	// Inline format: "🔴 0 · 🔴 1 · 🟡 0 · 🟢 1"
+	if !strings.Contains(out, "🔴 1") {
+		t.Errorf("want single high from import filter: %q", out)
+	}
+	if !strings.Contains(out, "🟢 1") {
+		t.Errorf("want single low from import filter: %q", out)
+	}
+	// Medium should be 0 (the non-import medium filtered out)
+	if !strings.Contains(out, "🟡 0") {
+		t.Errorf("medium should be zero after filter: %q", out)
+	}
+}
+
+func TestRiskHistogram_WhereContainsResourceType(t *testing.T) {
+	changes := []core.ResourceChange{
+		{Address: "a", ModulePath: "", ResourceType: "azurerm_subnet", Action: core.ActionUpdate, Impact: core.ImpactMedium},
+		{Address: "b", ModulePath: "", ResourceType: "azurerm_nsg", Action: core.ActionReplace, Impact: core.ImpactCritical},
+	}
+	r := &core.Report{ModuleGroups: core.GroupByModule(changes)}
+	ctx := &BlockContext{Target: "markdown", Report: r, Tree: core.BuildTree(r)}
+
+	out, err := (RiskHistogram{}).Render(ctx, map[string]any{
+		"style": "inline",
+		"where": `contains(["azurerm_subnet"], self.resource_type)`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Only the subnet survives: 1 medium, 0 critical
+	if !strings.Contains(out, "🟡 1") {
+		t.Errorf("want single medium: %q", out)
+	}
+	if !strings.Contains(out, "🔴 0") {
+		t.Errorf("critical should be zero: %q", out)
+	}
+}
+
+func TestRiskHistogram_NoWherePreservesDefault(t *testing.T) {
+	// Golden byte-parity test: without where, the tally must match
+	// the pre-where implementation exactly.
+	changes := []core.ResourceChange{
+		{Address: "a", ModulePath: "", Action: core.ActionUpdate, Impact: core.ImpactHigh},
+		{Address: "b", ModulePath: "", Action: core.ActionCreate, Impact: core.ImpactLow},
+	}
+	r := &core.Report{ModuleGroups: core.GroupByModule(changes)}
+	withTree := &BlockContext{Target: "markdown", Report: r, Tree: core.BuildTree(r)}
+	withoutTree := &BlockContext{Target: "markdown", Report: r}
+
+	a, err := (RiskHistogram{}).Render(withTree, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := (RiskHistogram{}).Render(withoutTree, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a != b {
+		t.Errorf("tree/no-tree parity broken:\n--- with-tree ---\n%s\n--- without-tree ---\n%s", a, b)
+	}
+}
+
 // TestModuleDetails_WhereFiltersRows verifies the HCL predicate
 // composes with the existing action+impact CSV filters and drops a
 // whole module section when every row is filtered out.
