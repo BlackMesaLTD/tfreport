@@ -394,6 +394,36 @@ Renders:
 ```
 
 
+### `table`
+
+Generic tree-query-backed markdown table. Select nodes via a path, optionally filter / sort / limit, render columns.
+
+**Args:**
+
+| Name | Type | Default | Description |
+|------|------|---------|-------------|
+| `source` | `string` | — | Path selector — e.g. `"resource"` or `"module_instance > resource"`. Required. See `core.ParsePath` for grammar. |
+| `where` | `string` | — | HCL predicate. Drops nodes where it evaluates false. `self` binds to each candidate. |
+| `sort` | `string` | — | HCL expression yielding a string or number per node. Stable sort. |
+| `desc` | `bool` | false | Reverse sort direction. |
+| `limit` | `int` | 0 | Cap the row count. `<= 0` means no cap. |
+| `columns` | `csv` | (kind-dependent) | Ordered column ids. Valid ids depend on the row kind (the final Path step). |
+| `heading` | `string` | — | Inserts `### heading` above the table when non-empty. |
+| `empty` | `string` | — | Rendered when zero rows match. Blank by default — caller's template handles absence. |
+
+**Columns** (for the `columns` csv arg):
+
+| ID | Heading | Description |
+|----|---------|-------------|
+| `attribute:description` | Description | Human-readable attribute description (preset-sourced; blank when none). |
+| `attribute:key` | Attribute | The attribute key, rendered inline-code. |
+| `key_change:impact` | Impact | Emoji + lowercase impact level for the worst resource covered by the sentence. |
+| `key_change:text` | Change | Plain-English summary sentence from the summarizer. |
+| `resource:action` | Action | Emoji + lowercase action name (create, update, delete, replace, read). |
+| `resource:address` | Resource | Full terraform address, rendered as `inline code`. |
+| `resource:impact` | Impact | Emoji + lowercase impact level (critical, high, medium, low, none). |
+
+
 ### `text_plan`
 
 Native terraform plan text block, budget-aware. Truncates at newline boundaries when ctx.TextBudget would be exceeded.

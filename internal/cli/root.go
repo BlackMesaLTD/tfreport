@@ -228,8 +228,10 @@ func configureTemplateFormatter(
 	}
 	if report != nil {
 		ctx.DisplayNames = report.DisplayNames
+		ctx.Tree = core.BuildTree(report)
 	} else if len(reports) > 0 && reports[0] != nil {
 		ctx.DisplayNames = reports[0].DisplayNames
+		ctx.Tree = core.BuildTree(reports...)
 	}
 
 	// Preset resolvers are only available when building from plan (not from

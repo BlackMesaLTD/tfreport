@@ -76,6 +76,14 @@ type BlockContext struct {
 	// blocks like deploy_checklist use this to silently downgrade an
 	// opt-in `preserve="true"` arg to a no-op for one-off local renders.
 	PriorRegions map[string]preserve.Region
+
+	// Tree is the structured PlanTree view built once per render pass
+	// from Report (single-report mode) or Reports (multi-report). nil
+	// when the CLI didn't build one — blocks that query the tree
+	// (`table`, future `details`/`list`/etc.) should check and skip
+	// gracefully rather than panic on a nil root. Legacy blocks that
+	// read Report/Reports directly ignore this field.
+	Tree *core.PlanTree
 }
 
 // OutputOptions mirrors the subset of config.OutputConfig that blocks consult
