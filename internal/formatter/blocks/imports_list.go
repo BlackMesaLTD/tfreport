@@ -12,6 +12,13 @@ import (
 // groups. Two formats (bulleted list or markdown table); list is the
 // default because most recipes want a collapsible dropdown of addresses.
 //
+// Internally this block now runs over the PlanTree — it queries for every
+// Resource node and filters on IsImport — but its output is byte-exact
+// identical to the prior ModuleGroups-iterating implementation. The
+// refactor unlocks future query-engine features (user-authored
+// where/group/sort) without forcing every caller to learn a new block
+// name.
+//
 // Args:
 //
 //	format (list|table; default "list")
@@ -53,20 +60,7 @@ func (ImportsList) Render(ctx *BlockContext, args map[string]any) (string, error
 	}
 	max := ArgInt(args, "max", 0)
 
-	type importedRow struct {
-		rc core.ResourceChange
-		mg core.ModuleGroup
-	}
-	var rows []importedRow
-	for _, r := range allReports(ctx) {
-		for _, mg := range r.ModuleGroups {
-			for _, rc := range mg.Changes {
-				if rc.IsImport {
-					rows = append(rows, importedRow{rc: rc, mg: mg})
-				}
-			}
-		}
-	}
+	rows := collectImportRows(ctx)
 	if len(rows) == 0 {
 		return "", nil
 	}
@@ -93,7 +87,7 @@ func (ImportsList) Render(ctx *BlockContext, args map[string]any) (string, error
 		for _, row := range rows {
 			b.WriteString("|")
 			for _, col := range cols {
-				fmt.Fprintf(&b, " %s |", renderImportsCell(ctx, row.rc, row.mg, col))
+				fmt.Fprintf(&b, " %s |", renderImportsCell(ctx, row, col))
 			}
 			b.WriteString("\n")
 		}
@@ -104,24 +98,107 @@ func (ImportsList) Render(ctx *BlockContext, args map[string]any) (string, error
 	return strings.TrimRight(b.String(), "\n"), nil
 }
 
-func renderImportsCell(ctx *BlockContext, rc core.ResourceChange, mg core.ModuleGroup, col string) string {
+// importRow is the scratch shape the renderer iterates over. Derived from
+// either the PlanTree (preferred) or the legacy ModuleGroups fallback.
+// ModuleName and ModulePath mirror the old ModuleGroup.Name / .Path fields
+// the previous implementation rendered against.
+type importRow struct {
+	rc         core.ResourceChange
+	moduleName string
+	modulePath string
+}
+
+// collectImportRows is the tree-first collector with a legacy fallback.
+// When ctx.Tree is populated it runs Query("resource") and filters by
+// IsImport via a single walk — one pass, no per-block-duplicated loop
+// nesting. When the tree is absent (older multi-report callers that
+// haven't been migrated, or unit tests) it falls back to the original
+// ModuleGroups iteration so callers see no behaviour change.
+//
+// Row ordering matches the tree walk, which is pre-order over the
+// grouper's path-sorted ModuleGroups — preserving the existing golden
+// output byte-for-byte.
+func collectImportRows(ctx *BlockContext) []importRow {
+	if ctx.Tree != nil && ctx.Tree.Root != nil {
+		return collectImportRowsFromTree(ctx.Tree)
+	}
+	return collectImportRowsFromReports(ctx)
+}
+
+func collectImportRowsFromTree(tree *core.PlanTree) []importRow {
+	nodes := core.Query(tree.Root, core.Path{core.KindResource})
+	var rows []importRow
+	for _, n := range nodes {
+		rc, ok := n.Payload.(*core.ResourceChange)
+		if !ok || rc == nil || !rc.IsImport {
+			continue
+		}
+		name, path := enclosingModuleDisplay(n, rc)
+		rows = append(rows, importRow{
+			rc:         *rc,
+			moduleName: name,
+			modulePath: path,
+		})
+	}
+	return rows
+}
+
+// enclosingModuleDisplay returns the (Name, Path) pair the legacy
+// imports_list rendered from the ResourceChange's enclosing ModuleGroup.
+// For root-module resources both values are "(root)" (matching
+// grouper.moduleName's sentinel). For nested resources Name is the
+// innermost ModuleCall's name and Path is rc.ModulePath verbatim.
+func enclosingModuleDisplay(n *core.Node, rc *core.ResourceChange) (string, string) {
+	if rc.ModulePath == "" {
+		return "(root)", "(root)"
+	}
+	for p := n.Parent; p != nil; p = p.Parent {
+		if p.Kind == core.KindModuleCall {
+			return p.Name, rc.ModulePath
+		}
+	}
+	return "", rc.ModulePath
+}
+
+// collectImportRowsFromReports is the pre-tree fallback. Kept so blocks
+// still render sensibly in unit-test BlockContexts that don't build a
+// tree.
+func collectImportRowsFromReports(ctx *BlockContext) []importRow {
+	var rows []importRow
+	for _, r := range allReports(ctx) {
+		for _, mg := range r.ModuleGroups {
+			for _, rc := range mg.Changes {
+				if rc.IsImport {
+					rows = append(rows, importRow{
+						rc:         rc,
+						moduleName: mg.Name,
+						modulePath: mg.Path,
+					})
+				}
+			}
+		}
+	}
+	return rows
+}
+
+func renderImportsCell(ctx *BlockContext, row importRow, col string) string {
 	switch col {
 	case "address":
-		return "`" + rc.Address + "`"
+		return "`" + row.rc.Address + "`"
 	case "resource_type":
-		return displayName(ctx, rc.ResourceType)
+		return displayName(ctx, row.rc.ResourceType)
 	case "resource_name":
-		return core.ResourceDisplayLabel(rc)
+		return core.ResourceDisplayLabel(row.rc)
 	case "module":
-		if mg.Name == "" {
+		if row.moduleName == "" {
 			return "(root)"
 		}
-		return "`" + mg.Name + "`"
+		return "`" + row.moduleName + "`"
 	case "module_path":
-		if mg.Path == "" {
+		if row.modulePath == "" {
 			return "(root)"
 		}
-		return "`" + mg.Path + "`"
+		return "`" + row.modulePath + "`"
 	}
 	return ""
 }
