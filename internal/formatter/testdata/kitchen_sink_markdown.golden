@@ -1,0 +1,64 @@
+
+# Terraform Plan Report
+
+
+**7 resources** — Plan: 2 to add, 2 to change, 1 to destroy, 1 to replace, 1 to read.
+
+
+## Key Changes
+
+- ✅ New resource group: rg-root
+- ♻️ Reading 1 client config
+- ❗ Replacing network interface: nic-vm (destroy + recreate)
+- ✅ New private dns zone: internal.example.com
+- ⚠️ Access_policy updates across 1 key vault
+- ❗ Removing route table: rt-old
+- ⚠️ 1 virtual network updated: address_space, tags
+
+
+## Modules
+
+### ✅ **(root)** (2 resources: 1 create, 1 read)
+
+| Resource | Action | Changed Attributes |
+|---|---|---|
+| `azurerm_resource_group.root` | ✅ create | — |
+| `data.azurerm_client_config.current` | ♻️ read | — |
+
+
+### ❗ **compute** (1 resources: 1 replace)
+
+| Resource | Action | Changed Attributes |
+|---|---|---|
+| `azurerm_network_interface.vm` | ❗ replace | ip_configuration |
+
+
+### ✅ **dns** (1 resources: 1 create)
+
+| Resource | Action | Changed Attributes |
+|---|---|---|
+| `azurerm_private_dns_zone.internal` | ✅ create | — |
+
+
+### ⚠️ **identity** (1 resources: 1 update)
+
+| Resource | Action | Changed Attributes |
+|---|---|---|
+| `azurerm_key_vault.secrets` | ⚠️ update | access_policy |
+
+
+### ❗ **legacy** (1 resources: 1 delete)
+
+| Resource | Action | Changed Attributes |
+|---|---|---|
+| `azurerm_route_table.decommissioned` | ❗ delete | — |
+
+
+### ⚠️ **vnet** (1 resources: 1 update)
+
+| Resource | Action | Changed Attributes |
+|---|---|---|
+| `azurerm_virtual_network.hub` | ⚠️ update | address_space, tags |
+
+
+<sub>♻️ 1 data source reads not shown</sub>

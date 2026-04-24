@@ -96,6 +96,46 @@ func TestGoldenSingleReport(t *testing.T) {
 	}
 }
 
+// TestGoldenKitchenSink exercises a plan fixture that covers every action
+// (create, update, delete, replace, read), nested submodules, imports,
+// root-module resources, sensitive values, and computed attributes — the
+// edge cases the current parser handles and any replacement parser must
+// preserve byte-exact.
+func TestGoldenKitchenSink(t *testing.T) {
+	cases := []struct {
+		target string
+		golden string
+	}{
+		{"markdown", "kitchen_sink_markdown.golden"},
+		{"github-pr-body", "kitchen_sink_github_pr_body.golden"},
+		{"github-pr-comment", "kitchen_sink_github_pr_comment.golden"},
+		{"github-step-summary", "kitchen_sink_github_step_summary.golden"},
+	}
+	for _, c := range cases {
+		t.Run(c.target, func(t *testing.T) {
+			r := loadReport(t, "../../testdata/kitchen_sink_plan.json")
+			out, err := newFormatter(t, c.target).Format(r)
+			if err != nil {
+				t.Fatal(err)
+			}
+			goldenCheck(t, c.golden, out)
+		})
+	}
+}
+
+// TestGoldenKitchenSinkJSON pins the JSON interchange format against the
+// kitchen-sink fixture so any ParseReport / MarshalReport drift surfaces
+// during the terraform-json swap.
+func TestGoldenKitchenSinkJSON(t *testing.T) {
+	r := loadReport(t, "../../testdata/kitchen_sink_plan.json")
+	f := &JSONFormatter{}
+	output, err := f.Format(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	goldenCheck(t, "kitchen_sink_json.golden", output)
+}
+
 // TestGoldenMultiReport exercises multi-report aggregation for every target
 // that's expected to be meaningful in multi mode (all four).
 func TestGoldenMultiReport(t *testing.T) {
