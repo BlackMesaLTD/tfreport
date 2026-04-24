@@ -60,8 +60,14 @@ func (InstanceDetail) Render(ctx *BlockContext, args map[string]any) (string, er
 		writeInstanceHeader(&b, ctx, inst, collapse)
 
 		if showSet["impact_table"] {
-			trt := ChangedResourcesTable{}
-			if out, _ := trt.Render(withChanges(ctx, inst.allChanges), map[string]any{"actions": "update,delete,replace"}); out != "" {
+			scoped := withChanges(ctx, inst.allChanges)
+			out, err := (Table{}).Render(scoped, map[string]any{
+				"source":  "resource",
+				"columns": "resource_type,name,changed,impact_with_note",
+				"where":   `contains(["update", "delete", "replace"], self.action)`,
+			})
+			if err == nil && out != "" {
+				b.WriteString("**Changed resources:**\n\n")
 				b.WriteString(out)
 				b.WriteString("\n\n")
 			}
@@ -362,8 +368,12 @@ func formatActionCountsShort(t actionTally) string {
 }
 
 // withChanges returns a shallow-copy ctx with Report replaced by a synthetic
-// single-group report containing only the supplied changes. Used so
-// downstream blocks (ChangedResourcesTable, TextPlan) see a scoped view.
+// single-group report containing only the supplied changes — and a
+// matching PlanTree rebuilt from that filtered report. Used so
+// downstream blocks (table, text_plan) see a scoped view both via
+// ctx.Report AND ctx.Tree. Without the tree rebuild, any table-block
+// call on the scoped ctx would walk the ORIGINAL tree and leak
+// resources outside the filter.
 func withChanges(ctx *BlockContext, changes []core.ResourceChange) *BlockContext {
 	r := currentReport(ctx)
 	if r == nil {
@@ -394,6 +404,7 @@ func withChanges(ctx *BlockContext, changes []core.ResourceChange) *BlockContext
 	cp := *ctx
 	cp.Report = &newR
 	cp.Reports = nil
+	cp.Tree = core.BuildTree(&newR)
 	return &cp
 }
 

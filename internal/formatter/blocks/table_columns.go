@@ -65,14 +65,14 @@ func resourceColumns() map[string]tableColumn {
 			},
 		},
 		"resource_type": {
-			Heading:     "Type",
-			Description: "Terraform resource type (e.g. `azurerm_subnet`).",
-			Render: func(_ *BlockContext, n *core.Node) string {
+			Heading:     "Resource",
+			Description: "Display name for the resource type (e.g. `subnet` for `azurerm_subnet`). Uses ctx.DisplayNames with a provider-stripped fallback. Matches the legacy changed_resources_table `resource_type` column.",
+			Render: func(ctx *BlockContext, n *core.Node) string {
 				rc, _ := n.Payload.(*core.ResourceChange)
 				if rc == nil {
 					return ""
 				}
-				return fmt.Sprintf("`%s`", rc.ResourceType)
+				return displayName(ctx, rc.ResourceType)
 			},
 		},
 		"resource_name": {
@@ -157,6 +157,56 @@ func resourceColumns() map[string]tableColumn {
 					return ""
 				}
 				return rc.DisplayLabel
+			},
+		},
+		"name": {
+			Heading:     "Name",
+			Description: "Resource display label via core.ResourceDisplayLabel (pre-computed from Before/After `name` attr). Matches the legacy changed_resources_table `name` column.",
+			Render: func(_ *BlockContext, n *core.Node) string {
+				rc, _ := n.Payload.(*core.ResourceChange)
+				if rc == nil {
+					return ""
+				}
+				return core.ResourceDisplayLabel(*rc)
+			},
+		},
+		"changed": {
+			Heading:     "Changed",
+			Description: "Changed attribute keys for update/replace; placeholder per `changed_attrs_display` mode for create/delete. Matches the legacy changed_resources_table `changed` column.",
+			Render: func(ctx *BlockContext, n *core.Node) string {
+				rc, _ := n.Payload.(*core.ResourceChange)
+				if rc == nil {
+					return ""
+				}
+				mode := resolveChangedAttrsMode(ctx, "")
+				return renderChangedCell(rc.Action, rc.ChangedAttributes, mode, formatAttrsKeysOnly)
+			},
+		},
+		"impact_with_note": {
+			Heading:     "Impact",
+			Description: "Impact emoji + level with optional ` — _note_` suffix pulled from ctx.NoteResolver. Matches the legacy changed_resources_table `impact` column grammar.",
+			Render: func(ctx *BlockContext, n *core.Node) string {
+				rc, _ := n.Payload.(*core.ResourceChange)
+				if rc == nil {
+					return ""
+				}
+				return formatImpactWithNote(ctx, *rc)
+			},
+		},
+		"force_new": {
+			Heading:     "Force-new",
+			Description: "`✓` when any changed attribute is preset-marked force_new; `—` otherwise. Requires ctx.ForceNewResolver.",
+			Render: func(ctx *BlockContext, n *core.Node) string {
+				rc, _ := n.Payload.(*core.ResourceChange)
+				if rc == nil || ctx.ForceNewResolver == nil {
+					return "—"
+				}
+				for _, a := range rc.ChangedAttributes {
+					if fn, ok := ctx.ForceNewResolver(rc.ResourceType, a.Key); ok && fn {
+						return "✓"
+					}
+				}
+				return "—"
 			},
 		},
 	}
