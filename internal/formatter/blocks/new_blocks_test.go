@@ -485,6 +485,79 @@ func TestKeyChanges_impactFilterEmptyResult(t *testing.T) {
 	}
 }
 
+// TestKeyChanges_TreeAndFallbackProduceIdenticalOutput locks in parity
+// between the tree-backed KeyChange collector and the legacy
+// allReports-loop fallback. If the two ever diverge this test fails
+// first, before any golden comparison.
+func TestKeyChanges_TreeAndFallbackProduceIdenticalOutput(t *testing.T) {
+	r := &core.Report{
+		KeyChanges: []core.KeyChange{
+			{Text: "🔴 critical one", Impact: core.ImpactCritical},
+			{Text: "🔴 high one", Impact: core.ImpactHigh},
+			{Text: "🟡 medium one", Impact: core.ImpactMedium},
+			{Text: "🟢 low one", Impact: core.ImpactLow},
+		},
+	}
+
+	fallbackCtx := &BlockContext{Target: "markdown", Report: r}
+	treeCtx := &BlockContext{Target: "markdown", Report: r, Tree: core.BuildTree(r)}
+
+	cases := []map[string]any{
+		nil,
+		{"impact": "critical,high"},
+		{"max": 2},
+		{"max": 1, "impact": "medium,low"},
+	}
+	for _, args := range cases {
+		fallback, err := (KeyChanges{}).Render(fallbackCtx, args)
+		if err != nil {
+			t.Fatalf("fallback args=%v: %v", args, err)
+		}
+		tree, err := (KeyChanges{}).Render(treeCtx, args)
+		if err != nil {
+			t.Fatalf("tree args=%v: %v", args, err)
+		}
+		if tree != fallback {
+			t.Errorf("tree/fallback divergence args=%v:\n--- tree ---\n%s\n--- fallback ---\n%s", args, tree, fallback)
+		}
+	}
+}
+
+// TestKeyChanges_MultiReportTreeOrder verifies that the tree-backed
+// collector preserves the per-report, in-report-order sequence the
+// allReports fallback emits. Matters because the tree visits reports
+// in Reports.Children order, and each Report's KeyChange children
+// come before any ModuleCall in buildReportNode.
+func TestKeyChanges_MultiReportTreeOrder(t *testing.T) {
+	ra := &core.Report{
+		Label:      "sub-a",
+		KeyChanges: []core.KeyChange{{Text: "A1", Impact: core.ImpactHigh}, {Text: "A2", Impact: core.ImpactLow}},
+	}
+	rb := &core.Report{
+		Label:      "sub-b",
+		KeyChanges: []core.KeyChange{{Text: "B1", Impact: core.ImpactCritical}},
+	}
+	ctx := &BlockContext{
+		Target:  "markdown",
+		Reports: []*core.Report{ra, rb},
+		Tree:    core.BuildTree(ra, rb),
+	}
+	out, err := (KeyChanges{}).Render(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Order must be A1, A2, B1
+	a1 := strings.Index(out, "A1")
+	a2 := strings.Index(out, "A2")
+	b1 := strings.Index(out, "B1")
+	if a1 < 0 || a2 < 0 || b1 < 0 {
+		t.Fatalf("missing bullet in output:\n%s", out)
+	}
+	if !(a1 < a2 && a2 < b1) {
+		t.Errorf("multi-report order wrong (want A1<A2<B1, got %d/%d/%d)\n%s", a1, a2, b1, out)
+	}
+}
+
 // ----- max arg: summary_table, changed_resources_table, instance_detail -----
 
 func TestSummaryTable_maxModule(t *testing.T) {

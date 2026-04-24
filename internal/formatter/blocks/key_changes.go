@@ -18,6 +18,10 @@ import (
 //   - github-pr-body: "**Key changes:**\n- a\n- b"
 //   - github-pr-comment: "- a\n- b" (no header; context is the <details>)
 //   - github-step-summary: "- a\n- b" (caller may wrap in a <details>)
+//
+// Internally collects entries via a PlanTree query over KeyChange nodes
+// with a legacy ModuleGroups-free fallback for contexts without a tree.
+// Output is byte-exact identical in both paths.
 type KeyChanges struct{}
 
 func (KeyChanges) Name() string { return "key_changes" }
@@ -26,10 +30,7 @@ func (KeyChanges) Render(ctx *BlockContext, args map[string]any) (string, error)
 	max := ArgInt(args, "max", 0)
 	impactFilter := parseImpactFilter(ArgCSV(args, "impact"))
 
-	var all []core.KeyChange
-	for _, r := range allReports(ctx) {
-		all = append(all, r.KeyChanges...)
-	}
+	all := collectKeyChanges(ctx)
 	if impactFilter != nil {
 		filtered := all[:0:0]
 		for _, kc := range all {
@@ -66,6 +67,40 @@ func (KeyChanges) Render(ctx *BlockContext, args map[string]any) (string, error)
 	}
 
 	return strings.TrimRight(b.String(), "\n"), nil
+}
+
+// collectKeyChanges pulls every KeyChange from the current context.
+// Tree-first: Query("key_change") walks every Report subtree in order,
+// emitting KeyChange nodes in their definition order within each report.
+// Falls back to the legacy allReports() loop when no tree is bound —
+// keeps unit-test contexts and any future non-TemplateFormatter callers
+// working byte-exact.
+func collectKeyChanges(ctx *BlockContext) []core.KeyChange {
+	if ctx.Tree != nil && ctx.Tree.Root != nil {
+		return collectKeyChangesFromTree(ctx.Tree)
+	}
+	return collectKeyChangesFromReports(ctx)
+}
+
+func collectKeyChangesFromTree(tree *core.PlanTree) []core.KeyChange {
+	nodes := core.Query(tree.Root, core.Path{core.KindKeyChange})
+	out := make([]core.KeyChange, 0, len(nodes))
+	for _, n := range nodes {
+		kc, ok := n.Payload.(*core.KeyChange)
+		if !ok || kc == nil {
+			continue
+		}
+		out = append(out, *kc)
+	}
+	return out
+}
+
+func collectKeyChangesFromReports(ctx *BlockContext) []core.KeyChange {
+	var all []core.KeyChange
+	for _, r := range allReports(ctx) {
+		all = append(all, r.KeyChanges...)
+	}
+	return all
 }
 
 // parseImpactFilter turns a csv like "critical,high" into a set of Impact
