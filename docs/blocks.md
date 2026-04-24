@@ -363,6 +363,7 @@ Top-level resource-count table with five grouping modes. Each grouping accepts i
 | `columns` | `csv` | (full set for the grouping) | Column subset to render. Valid IDs depend on `group` — see Columns below. |
 | `hide_empty` | `bool` | false | Drop rows with zero non-read resources. |
 | `max` | `int` | 0 (no limit) | Cap number of rows. No effect for `group=action`. |
+| `where` | `string` | — | HCL predicate evaluated per resource (`self` bound to the Resource tree node). Resources failing the predicate are excluded from every grouping's aggregation — counts, ActionCounts, MaxImpact and per-report totals reflect the filtered set. Modules whose every resource was filtered out disappear. In multi-report mode the filter applies independently to each report. E.g. `self.is_import`, `contains(["critical","high"], self.impact)`. |
 
 **Columns** (for the `columns` csv arg):
 

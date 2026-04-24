@@ -1774,6 +1774,175 @@ func crtReport() *core.Report {
 	)
 }
 
+// summaryWhereReport fabricates a report spanning two modules, two
+// resource types, and every action we care about for summary_table
+// groupings. rc.ModulePath populated so the tree index resolves.
+func summaryWhereReport() *core.Report {
+	changes := []core.ResourceChange{
+		{Address: "module.vnet.azurerm_subnet.app", ModulePath: "module.vnet", ResourceType: "azurerm_subnet", ResourceName: "app", Action: core.ActionUpdate, Impact: core.ImpactMedium},
+		{Address: "module.vnet.azurerm_subnet.db", ModulePath: "module.vnet", ResourceType: "azurerm_subnet", ResourceName: "db", Action: core.ActionDelete, Impact: core.ImpactHigh},
+		{Address: "module.vnet.azurerm_subnet.imp", ModulePath: "module.vnet", ResourceType: "azurerm_subnet", ResourceName: "imp", Action: core.ActionCreate, Impact: core.ImpactLow, IsImport: true},
+		{Address: "module.nsg.azurerm_nsg.web", ModulePath: "module.nsg", ResourceType: "azurerm_network_security_group", ResourceName: "web", Action: core.ActionReplace, Impact: core.ImpactCritical},
+		{Address: "module.nsg.azurerm_route.legacy", ModulePath: "module.nsg", ResourceType: "azurerm_route", ResourceName: "legacy", Action: core.ActionDelete, Impact: core.ImpactHigh},
+	}
+	r := &core.Report{
+		Label:          "prod",
+		ModuleGroups:   core.GroupByModule(changes),
+		TotalResources: 5,
+		ActionCounts:   map[core.Action]int{core.ActionUpdate: 1, core.ActionDelete: 2, core.ActionCreate: 1, core.ActionReplace: 1},
+		MaxImpact:      core.ImpactCritical,
+	}
+	return r
+}
+
+func TestSummaryTable_WhereOnModuleGrouping(t *testing.T) {
+	r := summaryWhereReport()
+	ctx := &BlockContext{Target: "markdown", Report: r, Tree: core.BuildTree(r)}
+
+	// Filter to imports only — only module.vnet has an import (the
+	// `imp` create). module.nsg should drop out entirely.
+	out, err := (SummaryTable{}).Render(ctx, map[string]any{
+		"group": "module",
+		"where": "self.is_import",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "vnet") {
+		t.Errorf("vnet module should remain:\n%s", out)
+	}
+	if strings.Contains(out, "nsg") {
+		t.Errorf("nsg module should be dropped (no imports):\n%s", out)
+	}
+	// One resource in the surviving vnet row (the import).
+	if !strings.Contains(out, "| 1 |") {
+		t.Errorf("want resources=1 in vnet row:\n%s", out)
+	}
+}
+
+func TestSummaryTable_WhereOnResourceTypeGrouping(t *testing.T) {
+	r := summaryWhereReport()
+	ctx := &BlockContext{Target: "markdown", Report: r, Tree: core.BuildTree(r)}
+
+	out, err := (SummaryTable{}).Render(ctx, map[string]any{
+		"group": "resource_type",
+		"where": `contains(["azurerm_subnet"], self.resource_type)`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "azurerm_subnet") {
+		t.Errorf("subnet row should remain:\n%s", out)
+	}
+	for _, drop := range []string{"azurerm_network_security_group", "azurerm_route"} {
+		if strings.Contains(out, drop) {
+			t.Errorf("%q should be filtered out:\n%s", drop, out)
+		}
+	}
+}
+
+func TestSummaryTable_WhereOnActionGrouping(t *testing.T) {
+	r := summaryWhereReport()
+	ctx := &BlockContext{Target: "markdown", Report: r, Tree: core.BuildTree(r)}
+
+	// Filter to critical only — one replace resource.
+	out, err := (SummaryTable{}).Render(ctx, map[string]any{
+		"group":      "action",
+		"where":      `self.impact == "critical"`,
+		"hide_empty": true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "replace") {
+		t.Errorf("replace row should remain:\n%s", out)
+	}
+	// Every other action should be hidden by hide_empty after filter.
+	for _, drop := range []string{"| create ", "| update ", "| delete "} {
+		if strings.Contains(out, drop) {
+			t.Errorf("%q should be hidden after filter:\n%s", drop, out)
+		}
+	}
+}
+
+func TestSummaryTable_WhereRecomputesSubscriptionTotals(t *testing.T) {
+	// Multi-report with where= — each report's totals should reflect
+	// only the surviving resources. Report a has 1 critical, report b
+	// has none.
+	ra := summaryWhereReport()
+	ra.Label = "sub-a"
+	rb := summaryWhereReport()
+	rb.Label = "sub-b"
+	// Remove the critical change from rb by rebuilding without it.
+	rbChanges := []core.ResourceChange{
+		{Address: "module.vnet.azurerm_subnet.app", ModulePath: "module.vnet", ResourceType: "azurerm_subnet", Action: core.ActionUpdate, Impact: core.ImpactMedium},
+	}
+	rb.ModuleGroups = core.GroupByModule(rbChanges)
+	rb.ActionCounts = map[core.Action]int{core.ActionUpdate: 1}
+	rb.TotalResources = 1
+	rb.MaxImpact = core.ImpactMedium
+
+	ctx := &BlockContext{
+		Target:  "github-pr-body",
+		Reports: []*core.Report{ra, rb},
+		Tree:    core.BuildTree(ra, rb),
+	}
+
+	out, err := (SummaryTable{}).Render(ctx, map[string]any{
+		"group": "subscription",
+		"where": `self.impact == "critical"`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// sub-a has exactly 1 matching resource; sub-b should show 0.
+	if !strings.Contains(out, "sub-a") {
+		t.Errorf("sub-a row should remain:\n%s", out)
+	}
+	if !strings.Contains(out, "sub-b") {
+		t.Errorf("sub-b row should remain (with zero counts):\n%s", out)
+	}
+	// sub-a row: 1 critical resource total.
+	if !strings.Contains(out, "| 1 |") {
+		t.Errorf("want resources=1 row for sub-a:\n%s", out)
+	}
+}
+
+func TestSummaryTable_NoWhereByteExactParity(t *testing.T) {
+	// No where= path must produce byte-identical output to the
+	// pre-where implementation (demonstrated by all existing goldens
+	// passing — this test just exercises the short-circuit directly).
+	r := summaryWhereReport()
+	ctx := &BlockContext{Target: "markdown", Report: r, Tree: core.BuildTree(r)}
+
+	out, err := (SummaryTable{}).Render(ctx, map[string]any{"group": "module"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Baseline: both modules present, full resource counts.
+	for _, want := range []string{"vnet", "nsg", "| 3 |", "| 2 |"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("baseline missing %q:\n%s", want, out)
+		}
+	}
+}
+
+func TestSummaryTable_WhereBadSyntaxErrors(t *testing.T) {
+	r := summaryWhereReport()
+	ctx := &BlockContext{Target: "markdown", Report: r, Tree: core.BuildTree(r)}
+
+	_, err := (SummaryTable{}).Render(ctx, map[string]any{
+		"group": "module",
+		"where": "self.impact ==",
+	})
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if !strings.Contains(err.Error(), "summary_table") {
+		t.Errorf("error should name the block: %v", err)
+	}
+}
+
 // TestBanner_ShowIfFiresOnImpact verifies the HCL predicate replaces
 // the `if_impact` CSV trigger with the idiomatic terraform shape —
 // `contains([...], self.max_impact)` — and binds `self` to the Report

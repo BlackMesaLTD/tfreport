@@ -28,6 +28,17 @@ import (
 //	hide_empty  bool (default false)  — drop rows with zero non-read resources.
 //	max         int  (default 0)      — cap rows. The `action` grouping always
 //	                                    shows all five actions (max has no effect).
+//	where       string (default "")   — HCL predicate evaluated per resource
+//	    with `self` bound to the Resource tree node. Resources that fail the
+//	    predicate are excluded from every grouping's aggregation — row counts,
+//	    ActionCounts, MaxImpact, and the `subscription` per-report totals all
+//	    reflect the filtered set. Empty module groups (whose every resource
+//	    was filtered out) are dropped. In multi-report mode the filter applies
+//	    independently to each report. Idioms:
+//
+//	        where: self.is_import
+//	        where: contains(["critical", "high"], self.impact)
+//	        where: self.resource_type == "azurerm_subnet"
 type SummaryTable struct{}
 
 func (SummaryTable) Name() string { return "summary_table" }
@@ -37,6 +48,24 @@ func (SummaryTable) Render(ctx *BlockContext, args map[string]any) (string, erro
 	hideEmpty := ArgBool(args, "hide_empty", false)
 	max := ArgInt(args, "max", 0)
 	columns := ArgCSV(args, "columns")
+
+	whereExpr, err := parseWhereArg(args, "summary_table")
+	if err != nil {
+		return "", err
+	}
+	if whereExpr != nil {
+		// Fold the predicate into a derived report (or reports, in multi
+		// mode) so the downstream grouping renderers don't need to know
+		// about where= at all. Preserves byte-exact output for the
+		// where-absent path; the derived report has recomputed
+		// ActionCounts/TotalResources/MaxImpact reflecting only the
+		// surviving resources.
+		derived, err := deriveFilteredCtx(ctx, whereExpr)
+		if err != nil {
+			return "", err
+		}
+		ctx = derived
+	}
 
 	switch group {
 	case "module_type":
@@ -584,6 +613,91 @@ func renderSubscriptionTable(ctx *BlockContext, columns []string, hideEmpty bool
 	return strings.TrimRight(b.String(), "\n"), nil
 }
 
+// deriveFilteredCtx produces a BlockContext whose Report (single mode)
+// or Reports (multi) have been rebuilt with only the resources that
+// pass the where predicate. ModuleGroups are pruned (empty groups
+// dropped), per-group and per-report ActionCounts are recomputed, and
+// TotalResources/MaxImpact reflect the filtered set. The caller's
+// context is returned with swapped Report/Reports fields; the rest of
+// the context (Target, Tree, DisplayNames, etc.) is preserved so
+// downstream renderers behave identically.
+//
+// Returning a filtered ctx lets every grouping renderer stay unchanged
+// — the where= surface is strictly additive at the top of Render.
+func deriveFilteredCtx(ctx *BlockContext, whereExpr *core.Expr) (*BlockContext, error) {
+	out := *ctx
+	if ctx.Report != nil {
+		fr, err := filteredReport(ctx, ctx.Report, whereExpr)
+		if err != nil {
+			return nil, err
+		}
+		out.Report = fr
+	}
+	if len(ctx.Reports) > 0 {
+		filteredReports := make([]*core.Report, 0, len(ctx.Reports))
+		for _, r := range ctx.Reports {
+			fr, err := filteredReport(ctx, r, whereExpr)
+			if err != nil {
+				return nil, err
+			}
+			filteredReports = append(filteredReports, fr)
+		}
+		out.Reports = filteredReports
+	}
+	return &out, nil
+}
+
+// filteredReport returns a shallow-copied report with Changes filtered
+// by whereExpr and derived aggregates (ActionCounts, TotalResources,
+// MaxImpact) recomputed. ModuleGroups retain their Name/Path/
+// Description/Module — only Changes and ActionCounts are rebuilt.
+// Empty module groups (zero surviving resources) are dropped.
+func filteredReport(ctx *BlockContext, r *core.Report, whereExpr *core.Expr) (*core.Report, error) {
+	idx := perReportResourceIndex(ctx, r)
+
+	newGroups := make([]core.ModuleGroup, 0, len(r.ModuleGroups))
+	overallActionCounts := map[core.Action]int{}
+	var overallImpact core.Impact
+	totalNonRead := 0
+
+	for _, mg := range r.ModuleGroups {
+		keptChanges := make([]core.ResourceChange, 0, len(mg.Changes))
+		groupActionCounts := map[core.Action]int{}
+		for _, rc := range mg.Changes {
+			keep, err := evalResourceWhere(whereExpr, idx, rc, "summary_table")
+			if err != nil {
+				return nil, err
+			}
+			if !keep {
+				continue
+			}
+			keptChanges = append(keptChanges, rc)
+			groupActionCounts[rc.Action]++
+			overallActionCounts[rc.Action]++
+			if rc.Action != core.ActionRead {
+				totalNonRead++
+			}
+			if core.ImpactSeverity(rc.Impact) > core.ImpactSeverity(overallImpact) {
+				overallImpact = rc.Impact
+			}
+		}
+		if len(keptChanges) == 0 {
+			continue
+		}
+		newMg := mg
+		newMg.Changes = keptChanges
+		newMg.ActionCounts = groupActionCounts
+		newGroups = append(newGroups, newMg)
+	}
+
+	filtered := *r
+	filtered.ModuleGroups = newGroups
+	filtered.ActionCounts = overallActionCounts
+	filtered.TotalResources = totalNonRead
+	filtered.MaxImpact = overallImpact
+	return &filtered, nil
+}
+
 // --- small local helpers ---
 
 func toSet(keys []string) map[string]struct{} {
@@ -640,6 +754,7 @@ func (SummaryTable) Doc() BlockDoc {
 			{Name: "columns", Type: "csv", Default: "(full set for the grouping)", Description: "Column subset to render. Valid IDs depend on `group` — see Columns below."},
 			{Name: "hide_empty", Type: "bool", Default: "false", Description: "Drop rows with zero non-read resources."},
 			{Name: "max", Type: "int", Default: "0 (no limit)", Description: "Cap number of rows. No effect for `group=action`."},
+			{Name: "where", Type: "string", Default: "", Description: "HCL predicate evaluated per resource (`self` bound to the Resource tree node). Resources failing the predicate are excluded from every grouping's aggregation — counts, ActionCounts, MaxImpact and per-report totals reflect the filtered set. Modules whose every resource was filtered out disappear. In multi-report mode the filter applies independently to each report. E.g. `self.is_import`, `contains([\"critical\",\"high\"], self.impact)`."},
 		},
 		Columns: cols,
 		Examples: []ExampleDoc{
