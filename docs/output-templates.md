@@ -708,7 +708,7 @@ When the blocks don't do what you want, drop into the underlying structs:
 
 ```go
 Label          string                // subscription label
-ModuleGroups   []ModuleGroup         // resources grouped by module path
+ModuleGroups   []ModuleGroup         // resources grouped by module path (each carries Name, Path, and structured Module)
 KeyChanges     []KeyChange           // {Text, Impact} pairs from summarizer
 TotalResources int
 ActionCounts   map[Action]int        // "create" → 5, "delete" → 2, ...
@@ -824,8 +824,36 @@ Preserved         map[string]any     // allowlisted attr values (see `.Preserved
 
 `ChangedAttribute.Sensitive` is true when terraform flagged the attr via `before_sensitive`/`after_sensitive`; `OldValue`/`NewValue` are already replaced with the literal string `(sensitive)` when Sensitive=true, so downstream formatters can render them verbatim without leaking secrets.
 
-See `internal/core/types.go` for the full schema including `ModuleGroup`
-and `ResourceChange`.
+**`core.ModuleGroup` fields** (iterated via `.Report.ModuleGroups`):
+
+```go
+Name         string              // leaf module-call name; legacy, use $mg.Module.Last.Name
+Path         string              // raw terraform module address; legacy, use $mg.Module.Address
+Changes      []ResourceChange    // all resources inside this module
+ActionCounts map[Action]int
+Description  string              // from config overrides or presets
+Module       Module              // structured form of Path (see below)
+```
+
+**`core.Module` fields + accessors:**
+
+```go
+Address  string           // canonical module address, "" for root
+Segments []ModuleSegment  // outermost to innermost; zero length for root
+```
+
+| Accessor | Returns | Use |
+|---|---|---|
+| `{{ $mg.Module.IsRoot }}` | bool | True iff this is the terraform root module. |
+| `{{ $mg.Module.Depth }}` | int | Number of module-call segments. |
+| `{{ $mg.Module.First.Name }}` | string | Outermost segment name — the module call declared in the root module. |
+| `{{ $mg.Module.Last.Name }}` | string | Innermost segment name — the module that directly owns the resources. |
+| `{{ $mg.Module.Last.Instance }}` | string | `for_each` key or `count` index of the innermost segment; empty if neither. |
+| `{{ $mg.Module.Path }}` | string | Same as `$mg.Module.Address` and `$mg.Path`. |
+
+`ModuleSegment` is `{Name, Instance}`. Instance carries the raw bytes inside `[...]` — e.g. `"privatelink.adf.azure.com"` for a string key (quotes included) or `0` for a count index.
+
+See `internal/core/types.go` and `internal/core/modules.go` for the full schema including `ModuleGroup`, `Module`, and `ResourceChange`.
 
 **Example — roll your own summary:**
 

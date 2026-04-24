@@ -108,6 +108,11 @@ func UnmarshalReport(data []byte) (*Report, error) {
 			Description:  jmg.Description,
 			ActionCounts: parseActionCounts(jmg.ActionCounts),
 			Changes:      make([]ResourceChange, len(jmg.Changes)),
+			// Module is derivable from Path, so it's not serialized —
+			// we rebuild it here so downstream readers see the same
+			// structured value whether the report came from a plan or
+			// from a prior tfreport JSON export.
+			Module: ParseModuleAddress(unwrapRootPath(jmg.Path)),
 		}
 		for j, jrc := range jmg.Changes {
 			mg.Changes[j] = unmarshalResource(jrc)
@@ -193,6 +198,17 @@ func stringifyActionCounts(counts map[Action]int) map[string]int {
 		result[string(k)] = v
 	}
 	return result
+}
+
+// unwrapRootPath translates the grouper's "(root)" sentinel back to the
+// empty string before handing it to ParseModuleAddress. Plan JSON uses ""
+// for root-module resources; the grouper substitutes "(root)" for map-key
+// ergonomics, and that substitution is visible in the serialized Path.
+func unwrapRootPath(path string) string {
+	if path == "(root)" {
+		return ""
+	}
+	return path
 }
 
 func parseActionCounts(counts map[string]int) map[Action]int {

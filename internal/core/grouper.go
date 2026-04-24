@@ -21,6 +21,7 @@ func GroupByModule(changes []ResourceChange) []ModuleGroup {
 				Name:         moduleName(path),
 				Path:         path,
 				ActionCounts: make(map[Action]int),
+				Module:       ParseModuleAddress(rc.ModulePath),
 			}
 			groupMap[path] = g
 			order = append(order, path)
