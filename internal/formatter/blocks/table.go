@@ -191,26 +191,18 @@ type tableRenderOpts struct {
 	TruncationLine string
 }
 
-// renderTable is the shared rendering primitive — every table-shaped
-// block (Table, modules_table, changed_resources_table, imports_list
-// in table format, attribute_diff in table format) pipes its resolved
-// nodes through this function. Keeps the markdown assembly in one
-// place so thin-wrapper migrations can't drift from the `table` block
-// over time.
+// renderTable is the tree-node-backed entry point: resolves headings
+// and cell renderers from the kind-indexed registry, then delegates
+// byte assembly to renderMarkdownTable. Callers that render tree nodes
+// (Table, modules_table, imports_list/table, changed_resources_table,
+// attribute_diff/table) use this.
 func renderTable(ctx *BlockContext, nodes []*core.Node, rowKind core.NodeKind, colIDs []string, opts tableRenderOpts) (string, error) {
 	cols, ok := tableColumns[rowKind]
 	if !ok {
 		return "", fmt.Errorf("renderTable: no column schema registered for kind %q", rowKind)
 	}
-	// Validate columns against the kind's registry — gives callers the
-	// same error grammar whether they entered via Table or a wrapper.
 	if err := validateColumns("table", colIDs, toColumnSet(rowKind)); err != nil {
 		return "", err
-	}
-
-	var b strings.Builder
-	if opts.Heading != "" {
-		fmt.Fprintf(&b, "### %s\n\n", opts.Heading)
 	}
 	headings := make([]string, len(colIDs))
 	for i, id := range colIDs {
@@ -220,11 +212,32 @@ func renderTable(ctx *BlockContext, nodes []*core.Node, rowKind core.NodeKind, c
 			headings[i] = cols[id].Heading
 		}
 	}
+	cellFor := func(i int, colID string) string {
+		return cols[colID].Render(ctx, nodes[i])
+	}
+	return renderMarkdownTable(len(nodes), headings, colIDs, cellFor, opts), nil
+}
+
+// renderMarkdownTable is the data-source-agnostic markdown assembler:
+// given a row count, headings, and a per-cell fetcher, it emits the
+// exact grammar every table-shaped block shares — heading row,
+// separator row, one row per index, optional truncation footer.
+//
+// Blocks whose rows AREN'T tree nodes (summary_table's aggregated
+// groupings, diff_groups' fingerprint buckets) build their own
+// cellFor closure over their own data and call this directly. Blocks
+// whose rows ARE tree nodes go through renderTable (above) and never
+// touch this helper.
+func renderMarkdownTable(rowCount int, headings, colIDs []string, cellFor func(rowIdx int, colID string) string, opts tableRenderOpts) string {
+	var b strings.Builder
+	if opts.Heading != "" {
+		fmt.Fprintf(&b, "### %s\n\n", opts.Heading)
+	}
 	writeColumnHeader(&b, headings)
-	for _, n := range nodes {
+	for i := 0; i < rowCount; i++ {
 		b.WriteString("|")
 		for _, id := range colIDs {
-			cell := cols[id].Render(ctx, n)
+			cell := cellFor(i, id)
 			if cell == "" && opts.Empty != "" {
 				cell = opts.Empty
 			}
@@ -251,7 +264,7 @@ func renderTable(ctx *BlockContext, nodes []*core.Node, rowKind core.NodeKind, c
 			b.WriteString("\n")
 		}
 	}
-	return strings.TrimRight(b.String(), "\n"), nil
+	return strings.TrimRight(b.String(), "\n")
 }
 
 // defaultTruncatedNoun picks a plural noun for the truncation row

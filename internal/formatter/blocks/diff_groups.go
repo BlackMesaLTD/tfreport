@@ -144,15 +144,13 @@ func (DiffGroups) Render(ctx *BlockContext, args map[string]any) (string, error)
 	if len(collapsed) > 0 {
 		out.WriteString("**Deduplicated changes:**\n\n")
 		headings := mapSlice(cols, func(id string) string { return diffGroupsHeadings[id] })
-		writeColumnHeader(&out, headings)
-		for _, b := range collapsed {
-			out.WriteString("|")
-			for _, col := range cols {
-				fmt.Fprintf(&out, " %s |", renderDiffGroupCell(b, col))
-			}
-			out.WriteString("\n")
-		}
-		out.WriteString("\n")
+		// Delegate collapsed-section markdown assembly to the shared
+		// renderMarkdownTable helper — keeps grammar identical to every
+		// other table-shaped block in this package.
+		out.WriteString(renderMarkdownTable(len(collapsed), headings, cols, func(i int, col string) string {
+			return renderDiffGroupCell(collapsed[i], col)
+		}, tableRenderOpts{}))
+		out.WriteString("\n\n")
 	}
 
 	if len(individual) > 0 {
