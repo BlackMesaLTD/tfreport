@@ -95,6 +95,12 @@ type ModuleGroup struct {
 	Changes      []ResourceChange
 	ActionCounts map[Action]int
 	Description  string // from config overrides or presets
+	// Module is the structured form of Path — parsed once during
+	// GroupByModule so downstream readers (templates, HCL expressions,
+	// block presets) can navigate segments without re-parsing. Kept
+	// alongside Name/Path rather than replacing them so existing consumers
+	// keep working; migration is incremental.
+	Module Module
 }
 
 // KeyChange is a single plain-English sentence produced by the summarizer,
