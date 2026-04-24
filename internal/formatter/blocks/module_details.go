@@ -39,6 +39,14 @@ import (
 //	max int (default 0 = unlimited)
 //	    Cap resources per module section. Extra rows truncate with a
 //	    per-format marker.
+//
+//	where string (default "")
+//	    HCL predicate evaluated per resource with `self` bound to the
+//	    tree node. Composes AND with `actions` and `impact`. A module
+//	    section disappears when its last surviving resource is filtered
+//	    out. Example:
+//
+//	        where: self.is_import || contains(["critical","high"], self.impact)
 type ModuleDetails struct{}
 
 func (ModuleDetails) Name() string { return "module_details" }
@@ -89,6 +97,11 @@ func (ModuleDetails) Render(ctx *BlockContext, args map[string]any) (string, err
 	impactFilter := parseImpactFilterSet(ArgCSV(args, "impact"))
 	max := ArgInt(args, "max", 0)
 
+	whereExpr, err := parseWhereArg(args, "module_details")
+	if err != nil {
+		return "", err
+	}
+
 	changedMode := ArgString(args, "changed_attrs_display", "")
 	if err := validChangedAttrsMode("module_details", changedMode); err != nil {
 		return "", err
@@ -100,11 +113,29 @@ func (ModuleDetails) Render(ctx *BlockContext, args map[string]any) (string, err
 		return "", nil
 	}
 
+	var nodeIdx map[string]*core.Node
+	if whereExpr != nil {
+		nodeIdx = resourceNodeIndex(ctx, r)
+	}
+
 	collapse := canCollapse(ctx.Target)
 	var b strings.Builder
 
 	for _, mg := range r.ModuleGroups {
 		kept := filterModuleChanges(mg.Changes, actionSet, impactFilter)
+		if whereExpr != nil {
+			filtered := kept[:0:0]
+			for _, rc := range kept {
+				keep, err := evalResourceWhere(whereExpr, nodeIdx, rc, "module_details")
+				if err != nil {
+					return "", err
+				}
+				if keep {
+					filtered = append(filtered, rc)
+				}
+			}
+			kept = filtered
+		}
 		if len(kept) == 0 {
 			continue
 		}
@@ -282,6 +313,7 @@ func (ModuleDetails) Doc() BlockDoc {
 			{Name: "actions", Type: "csv", Default: "(all)", Description: "Filter: keep only resources whose action is in the set."},
 			{Name: "impact", Type: "csv", Default: "(all)", Description: "Filter: keep only resources whose Impact is in the set."},
 			{Name: "max", Type: "int", Default: "0 (no limit)", Description: "Cap resources per module section; extras collapse into `… N more resources`."},
+			{Name: "where", Type: "string", Default: "", Description: "HCL predicate evaluated per resource (`self` bound to the tree node). Composes AND with `actions` and `impact`. Modules disappear when every resource is filtered out. E.g. `self.is_import || contains([\"critical\",\"high\"], self.impact)`."},
 			{Name: "changed_attrs_display", Type: "string", Default: "(cfg.Output.ChangedAttrsDisplay or `dash`)", Description: "How the `changed` column / `[attrs]` suffix renders for create/delete rows: `dash` (—), `wordy` (new/removed), `count` (N attrs), `list` (legacy full keys-list). Update/replace always show keys-list."},
 		},
 		Columns: cols,
