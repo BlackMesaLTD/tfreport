@@ -27,9 +27,16 @@ import (
 //	    `{{ range $r := .Reports }}{{ per_report "report" $r }}{{ end }}`.
 //
 //	show csv (default "key_changes")
-//	    Inner block names to compose. Supported: key_changes, summary_table,
-//	    module_details, changed_resources_table, text_plan, instance_detail.
-//	    Unknown names return a typed error.
+//	    Inner block names to compose. Supported: key_changes, module_details,
+//	    text_plan, instance_detail. Unknown names return a typed error.
+//
+//	    NOTE: summary_table and changed_resources_table are scheduled for
+//	    removal in v0.3.0. If you previously used
+//	    `show="changed_resources_table"` or `show="summary_table"` with
+//	    per_report, author the inner content as a `{{ table ... }}` call
+//	    in a regular template instead — per_report was never able to pass
+//	    args into its inner blocks, so the legacy names always rendered
+//	    with defaults anyway.
 //
 //	collapse bool (default: target uses canCollapse)
 //	    Force wrap/unwrap in <details>. Rarely set by users.
@@ -40,13 +47,20 @@ type PerReport struct{}
 
 func (PerReport) Name() string { return "per_report" }
 
+// perReportValidShow is the allowlist for the `show=` arg. Narrower than
+// the full block registry on purpose — composing chrome blocks
+// (title/footer/plan_counts) or zero-arg-failing blocks (table, banner)
+// inside a per-report card produces broken output. Users who need those
+// should author a full template with explicit block calls.
+//
+// summary_table and changed_resources_table were formerly accepted here;
+// both are scheduled for removal in v0.3.0. Their entries were pulled
+// so the allowlist doesn't advertise blocks we intend to delete.
 var perReportValidShow = map[string]bool{
-	"key_changes":             true,
-	"summary_table":           true,
-	"module_details":          true,
-	"changed_resources_table": true,
-	"text_plan":               true,
-	"instance_detail":         true,
+	"key_changes":     true,
+	"module_details":  true,
+	"text_plan":       true,
+	"instance_detail": true,
 }
 
 func (PerReport) Render(ctx *BlockContext, args map[string]any) (string, error) {
@@ -68,7 +82,7 @@ func (PerReport) Render(ctx *BlockContext, args map[string]any) (string, error) 
 	}
 	for _, name := range show {
 		if !perReportValidShow[name] {
-			return "", fmt.Errorf("per_report: unknown show item %q (valid: changed_resources_table, instance_detail, key_changes, module_details, summary_table, text_plan)", name)
+			return "", fmt.Errorf("per_report: unknown show item %q (valid: instance_detail, key_changes, module_details, text_plan)", name)
 		}
 	}
 
@@ -163,7 +177,7 @@ func (PerReport) Doc() BlockDoc {
 		Summary: "One 'report card' section for a single report. Declarative replacement for the {{ range .Reports }}<details>…{{ end }} loop in multi-report templates. Never wraps title/plan_counts/footer (those are top-level chrome).",
 		Args: []ArgDoc{
 			{Name: "report", Type: "*core.Report", Default: "—", Description: "Required. The report to render; pass `$r` from range .Reports."},
-			{Name: "show", Type: "csv", Default: "key_changes", Description: "Inner blocks to compose: key_changes, summary_table, module_details, changed_resources_table, text_plan, instance_detail."},
+			{Name: "show", Type: "csv", Default: "key_changes", Description: "Inner blocks to compose: key_changes, module_details, text_plan, instance_detail."},
 			{Name: "collapse", Type: "bool", Default: "(target uses <details>)", Description: "Force wrap/unwrap in <details>. Rarely set explicitly."},
 		},
 	}
