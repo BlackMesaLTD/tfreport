@@ -108,6 +108,14 @@ type changedResourcesFilters struct {
 	where *core.Expr
 }
 
+// changedResourcesColumnRename maps the historic changed_resources_table
+// column IDs onto the Resource-kind registry's canonical IDs. Most ids
+// match 1:1; `impact` maps to `impact_with_note` because the legacy
+// block's impact column renders notes inline.
+var changedResourcesColumnRename = map[string]string{
+	"impact": "impact_with_note",
+}
+
 func (ChangedResourcesTable) Render(ctx *BlockContext, args map[string]any) (string, error) {
 	cols := defaultCols(ArgCSV(args, "columns"),
 		[]string{"resource_type", "name", "changed", "impact"})
@@ -136,87 +144,95 @@ func (ChangedResourcesTable) Render(ctx *BlockContext, args map[string]any) (str
 	if err := validChangedAttrsMode("changed_resources_table", changedMode); err != nil {
 		return "", err
 	}
-	changedMode = resolveChangedAttrsMode(ctx, changedMode)
 
 	r := currentReport(ctx)
 	if r == nil {
 		return "", nil
 	}
 
-	rows, err := collectChangedResourcesRows(ctx, r, filters)
+	// Build ctx.Tree on-demand so wrapper works in test contexts that
+	// don't pre-populate one, matching the modules_table wrapper pattern.
+	inner := ctx
+	if inner.Tree == nil || inner.Tree.Root == nil {
+		cp := *ctx
+		cp.Tree = core.BuildTree(r)
+		inner = &cp
+	}
+
+	// Propagate changed_attrs_display into ctx so the shared `changed`
+	// column renderer picks up the mode without extra plumbing.
+	if changedMode != "" {
+		cp := *inner
+		cp.Output.ChangedAttrsDisplay = changedMode
+		inner = &cp
+	}
+
+	nodes, err := collectChangedResourcesNodes(inner, r, filters)
 	if err != nil {
 		return "", err
 	}
-	if len(rows) == 0 {
+	if len(nodes) == 0 {
 		return "", nil
 	}
 
-	total := len(rows)
-	truncated := false
+	total := len(nodes)
+	truncated := 0
 	if max > 0 && total > max {
-		rows = rows[:max]
-		truncated = true
+		truncated = total - max
+		nodes = nodes[:max]
 	}
 
-	var b strings.Builder
-	b.WriteString("**Changed resources:**\n\n")
-	headings := mapSlice(cols, func(id string) string { return changedResourcesHeadings[id] })
-	writeColumnHeader(&b, headings)
-	for _, row := range rows {
-		b.WriteString("|")
-		for _, col := range cols {
-			fmt.Fprintf(&b, " %s |", renderChangedResourceCell(ctx, row, col, changedMode))
+	// Translate legacy column ids → table canonical ids; carry the
+	// legacy heading grammar so callers see identical bytes.
+	canonical := make([]string, len(cols))
+	headings := map[string]string{}
+	for i, id := range cols {
+		dst := id
+		if rename, ok := changedResourcesColumnRename[id]; ok {
+			dst = rename
 		}
-		b.WriteString("\n")
+		canonical[i] = dst
+		headings[dst] = changedResourcesHeadings[id]
 	}
-	if truncated {
-		fmt.Fprintf(&b, "\n_... %d more resources_\n", total-max)
+
+	tableOut, err := renderTable(inner, nodes, core.KindResource, canonical, tableRenderOpts{
+		HeadingOverrides: headings,
+		TruncatedCount:   truncated,
+		TruncationLine:   fmt.Sprintf("_... %d more resources_", truncated),
+	})
+	if err != nil {
+		return "", err
 	}
-	return strings.TrimRight(b.String(), "\n"), nil
+	if tableOut == "" {
+		return "", nil
+	}
+	return "**Changed resources:**\n\n" + tableOut, nil
 }
 
-// collectChangedResourcesRows picks the tree-backed collector when a
-// PlanTree is bound OR when a `where` predicate is set (predicates need
-// `self` node context, so we build a tree on-demand if the caller
-// didn't supply one). Otherwise falls back to the legacy ModuleGroups
-// iteration for byte-exact parity with pre-tree call sites.
+// collectChangedResourcesNodes walks the tree at ctx.Tree, filters by
+// every axis in f, and returns the surviving Resource *core.Nodes in
+// tree-walk order. Caller passes them to renderTable directly.
 //
-// Row ordering: the tree walk visits module groups in path-sorted order
-// (grouper guarantees this), matching the legacy outer-loop order
-// byte-for-byte.
-func collectChangedResourcesRows(ctx *BlockContext, r *core.Report, f changedResourcesFilters) ([]changedResourcesRow, error) {
+// Row ordering matches legacy byte-for-byte: tree walk visits module
+// groups in path-sorted order (grouper guarantees this).
+func collectChangedResourcesNodes(ctx *BlockContext, r *core.Report, f changedResourcesFilters) ([]*core.Node, error) {
 	sub := reportSubtree(ctx)
-	if sub == nil && f.where != nil {
-		// Caller supplied `where` but no pre-built tree (older contexts,
-		// unit tests). Build one for this report so the predicate can
-		// bind `self` to a real node.
-		sub = core.BuildTree(r).Root
+	if sub == nil {
+		return nil, nil
 	}
-	if sub != nil {
-		return collectChangedResourcesFromTree(sub, r, f)
-	}
-	return collectChangedResourcesFromReports(r, f), nil
-}
-
-func collectChangedResourcesFromTree(subtree *core.Node, r *core.Report, f changedResourcesFilters) ([]changedResourcesRow, error) {
-	// Build a path -> mg map once so per-resource lookup is O(1).
 	mgByPath := make(map[string]core.ModuleGroup, len(r.ModuleGroups))
 	for _, mg := range r.ModuleGroups {
 		mgByPath[mg.Path] = mg
 	}
 
-	var rows []changedResourcesRow
-	nodes := core.Query(subtree, core.Path{core.KindResource})
-	for _, n := range nodes {
+	var out []*core.Node
+	for _, n := range core.Query(sub, core.Path{core.KindResource}) {
 		rc, ok := n.Payload.(*core.ResourceChange)
 		if !ok || rc == nil {
 			continue
 		}
 		mg, ok := mgByPath[mgLookupKey(rc.ModulePath)]
 		if !ok {
-			// Tree has a resource whose ModulePath doesn't match any mg —
-			// can happen in hand-crafted test fixtures. Fall back to a
-			// minimal mg so the row still renders cleanly.
 			mg = core.ModuleGroup{Name: moduleNameFromPath(rc.ModulePath), Path: mgLookupKey(rc.ModulePath)}
 		}
 		if !changedResourcesRowMatches(*rc, mg, f, r) {
@@ -231,25 +247,9 @@ func collectChangedResourcesFromTree(subtree *core.Node, r *core.Report, f chang
 				continue
 			}
 		}
-		rows = append(rows, changedResourcesRow{rc: *rc, mg: mg})
+		out = append(out, n)
 	}
-	return rows, nil
-}
-
-func collectChangedResourcesFromReports(r *core.Report, f changedResourcesFilters) []changedResourcesRow {
-	var rows []changedResourcesRow
-	for _, mg := range r.ModuleGroups {
-		if !changedResourcesModuleMatches(mg, f, r) {
-			continue
-		}
-		for _, rc := range mg.Changes {
-			if !changedResourcesResourceMatches(rc, f) {
-				continue
-			}
-			rows = append(rows, changedResourcesRow{rc: rc, mg: mg})
-		}
-	}
-	return rows
+	return out, nil
 }
 
 // changedResourcesRowMatches is the composite predicate used by the tree
@@ -355,64 +355,6 @@ func reportSubtree(ctx *BlockContext) *core.Node {
 		}
 	}
 	return nil
-}
-
-func renderChangedResourceCell(ctx *BlockContext, row changedResourcesRow, col, changedMode string) string {
-	rc := row.rc
-	mg := row.mg
-	switch col {
-	case "resource_type":
-		return displayName(ctx, rc.ResourceType)
-	case "name":
-		return core.ResourceDisplayLabel(rc)
-	case "address":
-		return "`" + rc.Address + "`"
-	case "module":
-		if mg.Name == "" {
-			return "(root)"
-		}
-		return "`" + mg.Name + "`"
-	case "module_type":
-		topLevel := core.TopLevelModuleName(mg.Path)
-		r := currentReport(ctx)
-		return core.ResolveModuleType(topLevel, r.ModuleSources, mg.Name)
-	case "changed":
-		return renderChangedCell(rc.Action, rc.ChangedAttributes, changedMode, formatAttrsKeysOnly)
-	case "impact":
-		return formatImpactWithNote(ctx, rc)
-	case "action":
-		return fmt.Sprintf("%s %s", core.ActionEmoji(rc.Action), rc.Action)
-	case "force_new":
-		if ctx.ForceNewResolver == nil {
-			return "—"
-		}
-		for _, a := range rc.ChangedAttributes {
-			if fn, ok := ctx.ForceNewResolver(rc.ResourceType, a.Key); ok && fn {
-				return "✓"
-			}
-		}
-		return "—"
-	case "is_import":
-		if rc.IsImport {
-			return "♻️ yes"
-		}
-		return "—"
-	case "notes":
-		if ctx.NoteResolver == nil {
-			return "—"
-		}
-		var notes []string
-		for _, a := range rc.ChangedAttributes {
-			if note := ctx.NoteResolver(rc.ResourceType, a.Key); note != "" {
-				notes = append(notes, note)
-			}
-		}
-		if len(notes) == 0 {
-			return "—"
-		}
-		return strings.Join(notes, "; ")
-	}
-	return ""
 }
 
 // parseActionFilter converts a csv action filter into a set. The literal

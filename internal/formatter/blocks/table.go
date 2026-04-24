@@ -154,44 +154,102 @@ func (Table) Render(ctx *BlockContext, args map[string]any) (string, error) {
 		return ArgString(args, "empty", ""), nil
 	}
 
-	empty := ArgString(args, "empty", "")
+	return renderTable(ctx, nodes, rowKind, colIDs, tableRenderOpts{
+		Heading:        ArgString(args, "heading", ""),
+		Empty:          ArgString(args, "empty", ""),
+		TruncatedCount: truncated,
+		TruncatedNoun:  ArgString(args, "truncated_noun", defaultTruncatedNoun(rowKind)),
+	})
+}
 
-	// Build header + rows.
+// tableRenderOpts bundles the non-query knobs that renderTable accepts.
+// Callers build this struct after they've done their own filtering;
+// renderTable then assembles the markdown bytes.
+type tableRenderOpts struct {
+	// Heading renders "### {Heading}\n\n" above the column header when
+	// non-empty. Empty (default) emits no heading.
+	Heading string
+	// HeadingOverrides maps column IDs to custom heading strings. Lets
+	// thin-wrapper blocks keep their historic header grammar (e.g.
+	// imports_list's "Resource Type" vs the Resource registry's default
+	// "Resource"). nil / missing entries fall through to the registry.
+	HeadingOverrides map[string]string
+	// Empty is the cell fallback when a column renderer returns "".
+	// Blank Empty leaves the cell blank (legacy behaviour for some blocks).
+	Empty string
+	// TruncatedCount > 0 appends a "… N more {TruncatedNoun} not shown"
+	// row at the bottom — use this to tell renderTable about rows the
+	// caller clipped before passing nodes in.
+	TruncatedCount int
+	// TruncatedNoun is the pluralised noun used in the truncation row.
+	// Callers should supply one appropriate to the row kind.
+	TruncatedNoun string
+	// TruncationLine overrides the entire truncation tail — when set,
+	// renderTable appends "\n\n{TruncationLine}" instead of the multi-
+	// cell "… N more ..." row. Used by blocks that historically emit
+	// a standalone italic footer (e.g. "_... N more imports_").
+	TruncationLine string
+}
+
+// renderTable is the shared rendering primitive — every table-shaped
+// block (Table, modules_table, changed_resources_table, imports_list
+// in table format, attribute_diff in table format) pipes its resolved
+// nodes through this function. Keeps the markdown assembly in one
+// place so thin-wrapper migrations can't drift from the `table` block
+// over time.
+func renderTable(ctx *BlockContext, nodes []*core.Node, rowKind core.NodeKind, colIDs []string, opts tableRenderOpts) (string, error) {
+	cols, ok := tableColumns[rowKind]
+	if !ok {
+		return "", fmt.Errorf("renderTable: no column schema registered for kind %q", rowKind)
+	}
+	// Validate columns against the kind's registry — gives callers the
+	// same error grammar whether they entered via Table or a wrapper.
+	if err := validateColumns("table", colIDs, toColumnSet(rowKind)); err != nil {
+		return "", err
+	}
+
 	var b strings.Builder
-	if h := ArgString(args, "heading", ""); h != "" {
-		fmt.Fprintf(&b, "### %s\n\n", h)
+	if opts.Heading != "" {
+		fmt.Fprintf(&b, "### %s\n\n", opts.Heading)
 	}
 	headings := make([]string, len(colIDs))
 	for i, id := range colIDs {
-		headings[i] = tableColumns[rowKind][id].Heading
+		if h, ok := opts.HeadingOverrides[id]; ok {
+			headings[i] = h
+		} else {
+			headings[i] = cols[id].Heading
+		}
 	}
 	writeColumnHeader(&b, headings)
 	for _, n := range nodes {
 		b.WriteString("|")
 		for _, id := range colIDs {
-			cell := tableColumns[rowKind][id].Render(ctx, n)
-			if cell == "" && empty != "" {
-				cell = empty
+			cell := cols[id].Render(ctx, n)
+			if cell == "" && opts.Empty != "" {
+				cell = opts.Empty
 			}
 			fmt.Fprintf(&b, " %s |", cell)
 		}
 		b.WriteString("\n")
 	}
 
-	// Truncation marker when limit clipped rows — mirrors the legacy
-	// modules_table / changed_resources_table grammar so thin-wrapper
-	// migrations stay byte-exact.
-	if truncated > 0 {
-		noun := ArgString(args, "truncated_noun", defaultTruncatedNoun(rowKind))
-		b.WriteString("|")
-		for i := range colIDs {
-			if i == 0 {
-				fmt.Fprintf(&b, " … %d more %s not shown |", truncated, noun)
-			} else {
-				b.WriteString(" |")
+	if opts.TruncatedCount > 0 {
+		switch {
+		case opts.TruncationLine != "":
+			b.WriteString("\n")
+			b.WriteString(opts.TruncationLine)
+			b.WriteString("\n")
+		default:
+			b.WriteString("|")
+			for i := range colIDs {
+				if i == 0 {
+					fmt.Fprintf(&b, " … %d more %s not shown |", opts.TruncatedCount, opts.TruncatedNoun)
+				} else {
+					b.WriteString(" |")
+				}
 			}
+			b.WriteString("\n")
 		}
-		b.WriteString("\n")
 	}
 	return strings.TrimRight(b.String(), "\n"), nil
 }

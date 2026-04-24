@@ -105,7 +105,7 @@ func TestTable_ResourceDefaults(t *testing.T) {
 	}
 
 	// Header present
-	if !strings.Contains(out, "| Resource | Action | Impact |") {
+	if !strings.Contains(out, "| Address | Action | Impact |") {
 		t.Errorf("missing default headers:\n%s", out)
 	}
 	// All four resource addresses present

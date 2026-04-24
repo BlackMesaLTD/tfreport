@@ -54,7 +54,7 @@ func toColumnSet(kind core.NodeKind) map[string]struct{} {
 func resourceColumns() map[string]tableColumn {
 	return map[string]tableColumn{
 		"address": {
-			Heading:     "Resource",
+			Heading:     "Address",
 			Description: "Full terraform address, rendered as `inline code`.",
 			Render: func(_ *BlockContext, n *core.Node) string {
 				rc, _ := n.Payload.(*core.ResourceChange)
@@ -88,13 +88,13 @@ func resourceColumns() map[string]tableColumn {
 		},
 		"module_path": {
 			Heading:     "Module",
-			Description: "Module address as terraform prints it (empty for root).",
+			Description: "Full module address, backticked; `(root)` for root-module resources. Matches legacy imports_list / changed_resources_table output.",
 			Render: func(_ *BlockContext, n *core.Node) string {
 				rc, _ := n.Payload.(*core.ResourceChange)
 				if rc == nil || rc.ModulePath == "" {
-					return "(root)"
+					return "`(root)`"
 				}
-				return rc.ModulePath
+				return "`" + rc.ModulePath + "`"
 			},
 		},
 		"action": {
@@ -129,13 +129,13 @@ func resourceColumns() map[string]tableColumn {
 		},
 		"is_import": {
 			Heading:     "Import",
-			Description: "`yes` when the resource is being imported, blank otherwise.",
+			Description: "`♻️ yes` when the resource is being imported, `—` otherwise. Matches legacy changed_resources_table output.",
 			Render: func(_ *BlockContext, n *core.Node) string {
 				rc, _ := n.Payload.(*core.ResourceChange)
 				if rc == nil || !rc.IsImport {
-					return ""
+					return "—"
 				}
-				return "yes"
+				return "♻️ yes"
 			},
 		},
 		"changed_attrs": {
@@ -207,6 +207,63 @@ func resourceColumns() map[string]tableColumn {
 					}
 				}
 				return "—"
+			},
+		},
+		"module": {
+			Heading:     "Module",
+			Description: "Enclosing ModuleCall's name (backticked); backticked `(root)` for root-module resources. Matches legacy imports_list / changed_resources_table `module` column.",
+			Render: func(_ *BlockContext, n *core.Node) string {
+				for p := n.Parent; p != nil; p = p.Parent {
+					if p.Kind == core.KindModuleCall {
+						return "`" + p.Name + "`"
+					}
+				}
+				return "`(root)`"
+			},
+		},
+		"module_type": {
+			Heading:     "Module Type",
+			Description: "Resolved module type via the outermost ModuleCall's source URL. Matches legacy changed_resources_table `module_type` column.",
+			Render: func(ctx *BlockContext, n *core.Node) string {
+				r := enclosingReport(n)
+				// Walk up to find the outermost ModuleCall for type resolution.
+				var topCall, leafCall string
+				for p := n.Parent; p != nil && p.Kind != core.KindReport; p = p.Parent {
+					if p.Kind == core.KindModuleCall {
+						topCall = p.Name // overwritten; final value is outermost
+						if leafCall == "" {
+							leafCall = p.Name
+						}
+					}
+				}
+				if topCall == "" {
+					return ""
+				}
+				var sources map[string]string
+				if r != nil {
+					sources = r.ModuleSources
+				}
+				return core.ResolveModuleType(topCall, sources, leafCall)
+			},
+		},
+		"notes": {
+			Heading:     "Notes",
+			Description: "Config-provided attribute notes joined with `; `; `—` when no note matches. Uses ctx.NoteResolver.",
+			Render: func(ctx *BlockContext, n *core.Node) string {
+				rc, _ := n.Payload.(*core.ResourceChange)
+				if rc == nil || ctx.NoteResolver == nil {
+					return "—"
+				}
+				var notes []string
+				for _, a := range rc.ChangedAttributes {
+					if note := ctx.NoteResolver(rc.ResourceType, a.Key); note != "" {
+						notes = append(notes, note)
+					}
+				}
+				if len(notes) == 0 {
+					return "—"
+				}
+				return strings.Join(notes, "; ")
 			},
 		},
 	}
