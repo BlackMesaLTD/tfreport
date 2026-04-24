@@ -27,6 +27,11 @@ import (
 //	empty   (string, optional)  — emitted when zero rows match. Default
 //	    empty string — caller's template composes around absence.
 //
+//	report  (*core.Report, optional) — scope the query to one specific
+//	    report's subtree. Accepts `$r` inside a `{{ range .Reports }}`
+//	    loop, matching the legacy modules_table convention. When unset
+//	    the query runs from ctx.Tree.Root (all reports in multi mode).
+//
 // Not yet supported (rejected with an actionable error):
 //
 //	group — will split the output into one labelled table per group in a
@@ -75,8 +80,25 @@ func (Table) Render(ctx *BlockContext, args map[string]any) (string, error) {
 		return "", err
 	}
 
+	// Pick the query scope: the full tree by default, OR one specific
+	// report's subtree when `report=$r` is passed (migration aid for
+	// callers moving off modules_table's `{{ table "report" $r ... }}`
+	// idiom).
+	scope := ctx.Tree.Root
+	if v, ok := args["report"]; ok && v != nil {
+		r, ok := v.(*core.Report)
+		if !ok {
+			return "", fmt.Errorf("table: 'report' arg must be a *core.Report, got %T", v)
+		}
+		sub := findReportSubtree(ctx.Tree.Root, r)
+		if sub == nil {
+			return "", fmt.Errorf("table: 'report' arg refers to a report not present in ctx.Tree")
+		}
+		scope = sub
+	}
+
 	// Run the query pipeline.
-	nodes := core.Query(ctx.Tree.Root, path)
+	nodes := core.Query(scope, path)
 
 	if w := ArgString(args, "where", ""); w != "" {
 		expr, err := core.ParseExpr(w, "table.where")
@@ -133,7 +155,7 @@ func (Table) Doc() BlockDoc {
 		Name:    "table",
 		Summary: "Generic tree-query-backed markdown table. Select nodes via a path, optionally filter / sort / limit, render columns.",
 		Args: []ArgDoc{
-			{Name: "source", Type: "string", Default: "", Description: "Path selector — e.g. `\"resource\"` or `\"module_instance > resource\"`. Required. See `core.ParsePath` for grammar."},
+			{Name: "source", Type: "string", Default: "", Description: "Path selector — e.g. `\"resource\"`, `\"module_instance\"`, `\"report\"`, or chained like `\"module_instance > resource\"`. Required. See `core.ParsePath` for grammar."},
 			{Name: "where", Type: "string", Default: "", Description: "HCL predicate. Drops nodes where it evaluates false. `self` binds to each candidate."},
 			{Name: "sort", Type: "string", Default: "", Description: "HCL expression yielding a string or number per node. Stable sort."},
 			{Name: "desc", Type: "bool", Default: "false", Description: "Reverse sort direction."},
@@ -141,6 +163,7 @@ func (Table) Doc() BlockDoc {
 			{Name: "columns", Type: "csv", Default: "(kind-dependent)", Description: "Ordered column ids. Valid ids depend on the row kind (the final Path step)."},
 			{Name: "heading", Type: "string", Default: "", Description: "Inserts `### heading` above the table when non-empty."},
 			{Name: "empty", Type: "string", Default: "", Description: "Rendered when zero rows match. Blank by default — caller's template handles absence."},
+			{Name: "report", Type: "*core.Report", Default: "(all reports)", Description: "Scope the query to one report's subtree. Accepts `$r` inside a `{{ range .Reports }}` loop — matches the legacy `modules_table \"report\" $r` convention so existing templates migrate with minimal rewiring."},
 		},
 		Columns: tableColumnDocs(),
 	}
@@ -148,7 +171,13 @@ func (Table) Doc() BlockDoc {
 
 func tableColumnDocs() []ColumnDoc {
 	var out []ColumnDoc
-	for _, kind := range []core.NodeKind{core.KindResource, core.KindAttribute, core.KindKeyChange} {
+	for _, kind := range []core.NodeKind{
+		core.KindResource,
+		core.KindAttribute,
+		core.KindKeyChange,
+		core.KindModuleInstance,
+		core.KindReport,
+	} {
 		for _, id := range tableDefaultColumns[kind] {
 			if col, ok := tableColumns[kind][id]; ok {
 				out = append(out, ColumnDoc{
@@ -160,6 +189,35 @@ func tableColumnDocs() []ColumnDoc {
 		}
 	}
 	return out
+}
+
+// findReportSubtree locates the Report node in root whose Payload is
+// the exact *core.Report pointer target. For a single-report tree
+// (root.Kind == KindReport) it checks identity and returns root on
+// match; for a multi-report tree it walks root's children. Pointer
+// identity is required because two reports can share a label yet be
+// logically distinct (different subscriptions, different runs).
+func findReportSubtree(root *core.Node, target *core.Report) *core.Node {
+	if root == nil || target == nil {
+		return nil
+	}
+	switch root.Kind {
+	case core.KindReport:
+		if r, ok := root.Payload.(*core.Report); ok && r == target {
+			return root
+		}
+		return nil
+	case core.KindReports:
+		for _, c := range root.Children {
+			if c.Kind != core.KindReport {
+				continue
+			}
+			if r, ok := c.Payload.(*core.Report); ok && r == target {
+				return c
+			}
+		}
+	}
+	return nil
 }
 
 func init() { defaultRegistry.Register(Table{}) }
