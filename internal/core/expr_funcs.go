@@ -17,15 +17,21 @@ import (
 // Currently registered:
 //
 //	count(x)       — length of list/set/map/tuple/object; errors otherwise
+//	contains(c, v) — true iff collection c contains value v. Mirrors the
+//	                 terraform stdlib function so users can write
+//	                 `contains(["critical","high"], self.impact)` in a
+//	                 `where` predicate.
 //	fingerprint(x) — sha256-hex of a canonical string form of x
 //	is_root(n)     — true iff the node has no parent (tree root)
 //	depth(n)       — shortcut for n.depth; accepts any object with `depth`
 //
-// The function surface is deliberately tiny. More functions will be added
-// as concrete consumer needs emerge; we resist growing it speculatively.
+// The function surface is deliberately tiny but favours terraform
+// idioms — the priority is that expressions feel native to a terraform
+// user reading them in `.tfreport.yml`.
 func DefaultFunctions() map[string]function.Function {
 	return map[string]function.Function{
 		"count":       countFunc,
+		"contains":    containsFunc,
 		"fingerprint": fingerprintFunc,
 		"is_root":     isRootFunc,
 		"depth":       depthFunc,
@@ -57,6 +63,41 @@ var countFunc = function.New(&function.Spec{
 			return cty.NilVal, function.NewArgErrorf(0,
 				"count: requires list, set, map, tuple, or object; got %s", t.FriendlyName())
 		}
+	},
+})
+
+// containsFunc mirrors terraform's stdlib contains(list, value). A
+// terraform user's first reach for "is x one of [a, b, c]" is
+// `contains([a, b, c], x)`, not `x == a || x == b || x == c`. Keeps
+// tfreport expressions idiomatic in their daily editor.
+//
+// Accepts list, set, or tuple for the collection argument. Returns
+// false on a null collection (defensive — null isn't the same as an
+// empty list but the user intent is almost always the same).
+var containsFunc = function.New(&function.Spec{
+	Params: []function.Parameter{
+		{Name: "collection", Type: cty.DynamicPseudoType, AllowNull: true},
+		{Name: "value", Type: cty.DynamicPseudoType, AllowNull: true},
+	},
+	Type: function.StaticReturnType(cty.Bool),
+	Impl: func(args []cty.Value, _ cty.Type) (cty.Value, error) {
+		collection := args[0]
+		value := args[1]
+		if collection.IsNull() {
+			return cty.False, nil
+		}
+		t := collection.Type()
+		if !(t.IsListType() || t.IsSetType() || t.IsTupleType()) {
+			return cty.NilVal, function.NewArgErrorf(0,
+				"contains: first argument must be a list, set, or tuple; got %s", t.FriendlyName())
+		}
+		for it := collection.ElementIterator(); it.Next(); {
+			_, el := it.Element()
+			if el.Type().Equals(value.Type()) && el.RawEquals(value) {
+				return cty.True, nil
+			}
+		}
+		return cty.False, nil
 	},
 })
 
