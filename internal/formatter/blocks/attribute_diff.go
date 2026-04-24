@@ -38,6 +38,16 @@ import (
 //	truncate int (default 60)
 //	    Max characters per before/after cell. Longer values are ellipsized.
 //	    Pass 0 to disable truncation.
+//
+//	where string (default "")
+//	    HCL predicate evaluated per attribute with `self` bound to the
+//	    Attribute tree node. `self` exposes key, sensitive, computed,
+//	    description (plus the shared kind/name/depth fields). Composes
+//	    AND with `addresses` and `actions`. Example idioms:
+//
+//	        where: self.sensitive
+//	        where: !self.computed
+//	        where: contains(["tags", "location"], self.key)
 type AttributeDiff struct{}
 
 func (AttributeDiff) Name() string { return "attribute_diff" }
@@ -78,9 +88,19 @@ func (AttributeDiff) Render(ctx *BlockContext, args map[string]any) (string, err
 	max := ArgInt(args, "max", 0)
 	truncate := ArgInt(args, "truncate", 60)
 
+	whereExpr, err := parseWhereArg(args, "attribute_diff")
+	if err != nil {
+		return "", err
+	}
+
 	r := currentReport(ctx)
 	if r == nil {
 		return "", nil
+	}
+
+	var attrIdx map[string]*core.Node
+	if whereExpr != nil {
+		attrIdx = attributeNodeIndex(ctx, r)
 	}
 
 	var rows []attrDiffRow
@@ -95,6 +115,13 @@ func (AttributeDiff) Render(ctx *BlockContext, args map[string]any) (string, err
 				}
 			}
 			for _, attr := range rc.ChangedAttributes {
+				keep, err := evalAttributeWhere(whereExpr, attrIdx, rc, attr, "attribute_diff")
+				if err != nil {
+					return "", err
+				}
+				if !keep {
+					continue
+				}
 				rows = append(rows, attrDiffRow{rc: rc, attr: attr})
 			}
 		}
@@ -228,6 +255,7 @@ func (AttributeDiff) Doc() BlockDoc {
 			{Name: "columns", Type: "csv", Default: "key,old,new", Description: "Table-mode columns."},
 			{Name: "max", Type: "int", Default: "0 (no limit)", Description: "Cap rows; truncation marker `… N more attributes`."},
 			{Name: "truncate", Type: "int", Default: "60", Description: "Max characters per before/after cell (0 disables)."},
+			{Name: "where", Type: "string", Default: "", Description: "HCL predicate evaluated per attribute with `self` bound to the Attribute tree node (`self.key`, `self.sensitive`, `self.computed`, `self.description`). Composes AND with `addresses` and `actions`. E.g. `self.sensitive`, `!self.computed`, `contains([\"tags\", \"location\"], self.key)`."},
 		},
 		Columns: cols,
 	}

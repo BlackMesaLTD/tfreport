@@ -21,6 +21,11 @@ import (
 //
 //	threshold int (default 2) — only collapse when group size >= threshold
 //	actions   csv (default "update,delete,replace") — which actions participate
+//	where     string (default "") — HCL predicate evaluated per resource
+//	    with `self` bound to the tree node. Composes AND with `actions`.
+//	    Example: `where: self.impact == "critical"` to fingerprint only
+//	    critical changes; `where: contains(["azurerm_subnet"], self.resource_type)`
+//	    to restrict to a single resource type.
 //
 // # Single-report semantics
 //
@@ -65,9 +70,21 @@ func (DiffGroups) Render(ctx *BlockContext, args map[string]any) (string, error)
 	}
 	actions := parseActionFilter(ArgString(args, "actions", "update,delete,replace"))
 
+	whereExpr, err := parseWhereArg(args, "diff_groups")
+	if err != nil {
+		return "", err
+	}
+
 	r := currentReport(ctx)
 	if r == nil {
 		return "", nil
+	}
+
+	// Build the node index once if a predicate is set. Bypasses the walk
+	// when there's no predicate, keeping the common path allocation-free.
+	var nodeIdx map[string]*core.Node
+	if whereExpr != nil {
+		nodeIdx = resourceNodeIndex(ctx, r)
 	}
 
 	buckets := map[string]*diffBucket{}
@@ -76,6 +93,13 @@ func (DiffGroups) Render(ctx *BlockContext, args map[string]any) (string, error)
 	for _, mg := range r.ModuleGroups {
 		for _, rc := range mg.Changes {
 			if _, ok := actions[rc.Action]; !ok {
+				continue
+			}
+			keep, err := evalResourceWhere(whereExpr, nodeIdx, rc, "diff_groups")
+			if err != nil {
+				return "", err
+			}
+			if !keep {
 				continue
 			}
 			fp := fingerprint(rc)
@@ -234,6 +258,7 @@ func (DiffGroups) Doc() BlockDoc {
 			{Name: "columns", Type: "csv", Default: "pattern,count,sample", Description: "Column subset for the collapsed-changes table."},
 			{Name: "threshold", Type: "int", Default: "2", Description: "Only collapse when group size ≥ threshold."},
 			{Name: "actions", Type: "csv", Default: "update,delete,replace", Description: "Which actions participate in fingerprint grouping."},
+			{Name: "where", Type: "string", Default: "", Description: "HCL predicate evaluated per resource (`self` bound to the tree node). Composes AND with `actions`. E.g. `self.impact == \"critical\"`, `contains([\"azurerm_subnet\"], self.resource_type)`. See `core.NodeValue` for the `self` field set."},
 		},
 		Columns: []ColumnDoc{
 			{ID: "pattern", Heading: "Pattern", Description: "Action emoji + action + bracketed attribute-key list."},

@@ -1407,6 +1407,37 @@ func TestDiffGroups_columnsSubset(t *testing.T) {
 	}
 }
 
+func TestDiffGroups_WhereFiltersBeforeBucketing(t *testing.T) {
+	// Four resources: two critical (impact-filtered), two medium. With
+	// where=critical, only the critical two should bucket together — the
+	// medium pair should be ignored entirely, not added to a sub-threshold
+	// bucket.
+	changes := []core.ResourceChange{
+		{Address: "a", ModulePath: "", ResourceType: "t", Action: core.ActionReplace, Impact: core.ImpactCritical, ChangedAttributes: []core.ChangedAttribute{{Key: "x"}}},
+		{Address: "b", ModulePath: "", ResourceType: "t", Action: core.ActionReplace, Impact: core.ImpactCritical, ChangedAttributes: []core.ChangedAttribute{{Key: "x"}}},
+		{Address: "c", ModulePath: "", ResourceType: "t", Action: core.ActionUpdate, Impact: core.ImpactMedium, ChangedAttributes: []core.ChangedAttribute{{Key: "y"}}},
+		{Address: "d", ModulePath: "", ResourceType: "t", Action: core.ActionUpdate, Impact: core.ImpactMedium, ChangedAttributes: []core.ChangedAttribute{{Key: "y"}}},
+	}
+	r := &core.Report{ModuleGroups: core.GroupByModule(changes)}
+	ctx := &BlockContext{Target: "markdown", Report: r, Tree: core.BuildTree(r)}
+
+	out, err := (DiffGroups{}).Render(ctx, map[string]any{
+		"actions": "all",
+		"where":   `self.impact == "critical"`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "**Deduplicated changes:**") {
+		t.Errorf("want collapsed section:\n%s", out)
+	}
+	// The critical bucket (count=2) should be present; the medium rows
+	// should not appear at all (neither as a bucket nor an individual).
+	if strings.Contains(out, "`c`") || strings.Contains(out, "`d`") {
+		t.Errorf("medium resources should be filtered out:\n%s", out)
+	}
+}
+
 func TestDiffGroups_unknownColumn(t *testing.T) {
 	r := syntheticReport("a", syntheticGroup("m",
 		core.ResourceChange{Address: "a", Action: core.ActionUpdate, ChangedAttributes: []core.ChangedAttribute{{Key: "k"}}},
@@ -1741,6 +1772,138 @@ func crtReport() *core.Report {
 			ActionCounts: map[core.Action]int{core.ActionReplace: 1, core.ActionDelete: 1},
 		},
 	)
+}
+
+// TestModuleDetails_WhereFiltersRows verifies the HCL predicate
+// composes with the existing action+impact CSV filters and drops a
+// whole module section when every row is filtered out.
+func TestModuleDetails_WhereFiltersRows(t *testing.T) {
+	changes := []core.ResourceChange{
+		{Address: "module.a.azurerm_subnet.app", ModulePath: "module.a", ResourceType: "azurerm_subnet", ResourceName: "app", Action: core.ActionUpdate, Impact: core.ImpactMedium, IsImport: false, ChangedAttributes: []core.ChangedAttribute{{Key: "tags"}}},
+		{Address: "module.a.azurerm_subnet.db", ModulePath: "module.a", ResourceType: "azurerm_subnet", ResourceName: "db", Action: core.ActionDelete, Impact: core.ImpactHigh, IsImport: false, ChangedAttributes: []core.ChangedAttribute{{Key: "name"}}},
+		{Address: "module.b.azurerm_route.old", ModulePath: "module.b", ResourceType: "azurerm_route", ResourceName: "old", Action: core.ActionUpdate, Impact: core.ImpactLow, IsImport: true, ChangedAttributes: []core.ChangedAttribute{{Key: "hop"}}},
+	}
+	r := &core.Report{ModuleGroups: core.GroupByModule(changes)}
+	ctx := &BlockContext{Target: "markdown", Report: r, Tree: core.BuildTree(r)}
+
+	// Keep only imports. Module "a" has zero imports; "b" has one. Whole
+	// "a" section should disappear.
+	out, err := (ModuleDetails{}).Render(ctx, map[string]any{
+		"where": "self.is_import",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "**a**") {
+		t.Errorf("module a should be absent when every row filtered:\n%s", out)
+	}
+	if !strings.Contains(out, "**b**") {
+		t.Errorf("module b should be present:\n%s", out)
+	}
+	if !strings.Contains(out, "azurerm_route.old") {
+		t.Errorf("imported route should render:\n%s", out)
+	}
+}
+
+func TestModuleDetails_WhereComposesWithActionsAndImpact(t *testing.T) {
+	changes := []core.ResourceChange{
+		{Address: "module.a.azurerm_subnet.app", ModulePath: "module.a", ResourceType: "azurerm_subnet", ResourceName: "app", Action: core.ActionUpdate, Impact: core.ImpactMedium, ChangedAttributes: []core.ChangedAttribute{{Key: "tags"}}},
+		{Address: "module.a.azurerm_subnet.db", ModulePath: "module.a", ResourceType: "azurerm_subnet", ResourceName: "db", Action: core.ActionDelete, Impact: core.ImpactHigh, ChangedAttributes: []core.ChangedAttribute{{Key: "name"}}},
+	}
+	r := &core.Report{ModuleGroups: core.GroupByModule(changes)}
+	ctx := &BlockContext{Target: "markdown", Report: r, Tree: core.BuildTree(r)}
+
+	// actions=update narrows to 1 (app). where=high narrows to 1 (db).
+	// Intersection is empty — section should disappear.
+	out, err := (ModuleDetails{}).Render(ctx, map[string]any{
+		"actions": "update",
+		"where":   `self.impact == "high"`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "" {
+		t.Errorf("intersection is empty; want no output; got:\n%s", out)
+	}
+}
+
+func TestAttributeDiff_WhereOnAttributeFields(t *testing.T) {
+	changes := []core.ResourceChange{
+		{
+			Address: "azurerm_key_vault.main", ModulePath: "", ResourceType: "azurerm_key_vault", ResourceName: "main",
+			Action: core.ActionUpdate, Impact: core.ImpactMedium,
+			ChangedAttributes: []core.ChangedAttribute{
+				{Key: "name"},
+				{Key: "access_policy", Sensitive: true},
+				{Key: "location", Computed: true},
+			},
+		},
+	}
+	r := &core.Report{ModuleGroups: core.GroupByModule(changes)}
+	ctx := &BlockContext{Target: "markdown", Report: r, Tree: core.BuildTree(r)}
+
+	// Keep only sensitive attributes.
+	out, err := (AttributeDiff{}).Render(ctx, map[string]any{
+		"where": "self.sensitive",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "access_policy") {
+		t.Errorf("want sensitive attr in output:\n%s", out)
+	}
+	for _, drop := range []string{"`name`", "`location`"} {
+		if strings.Contains(out, drop) {
+			t.Errorf("%q should be filtered out:\n%s", drop, out)
+		}
+	}
+}
+
+func TestAttributeDiff_WhereContainsKey(t *testing.T) {
+	changes := []core.ResourceChange{
+		{
+			Address: "azurerm_subnet.app", ModulePath: "", ResourceType: "azurerm_subnet", ResourceName: "app",
+			Action: core.ActionUpdate, Impact: core.ImpactMedium,
+			ChangedAttributes: []core.ChangedAttribute{
+				{Key: "name"}, {Key: "location"}, {Key: "tags"}, {Key: "address_prefixes"},
+			},
+		},
+	}
+	r := &core.Report{ModuleGroups: core.GroupByModule(changes)}
+	ctx := &BlockContext{Target: "markdown", Report: r, Tree: core.BuildTree(r)}
+
+	out, err := (AttributeDiff{}).Render(ctx, map[string]any{
+		"where": `contains(["tags", "location"], self.key)`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, keep := range []string{"`tags`", "`location`"} {
+		if !strings.Contains(out, keep) {
+			t.Errorf("want %q in output:\n%s", keep, out)
+		}
+	}
+	for _, drop := range []string{"`name`", "`address_prefixes`"} {
+		if strings.Contains(out, drop) {
+			t.Errorf("%q should be filtered out:\n%s", drop, out)
+		}
+	}
+}
+
+func TestAttributeDiff_WhereBadSyntaxErrors(t *testing.T) {
+	changes := []core.ResourceChange{
+		{Address: "a", ModulePath: "", Action: core.ActionUpdate, ChangedAttributes: []core.ChangedAttribute{{Key: "k"}}},
+	}
+	r := &core.Report{ModuleGroups: core.GroupByModule(changes)}
+	ctx := &BlockContext{Target: "markdown", Report: r, Tree: core.BuildTree(r)}
+
+	_, err := (AttributeDiff{}).Render(ctx, map[string]any{"where": "self.sensitive =="})
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if !strings.Contains(err.Error(), "attribute_diff") {
+		t.Errorf("error should name the block: %v", err)
+	}
 }
 
 // TestChangedResourcesTable_WhereSimplePredicate verifies the HCL

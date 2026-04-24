@@ -20,6 +20,7 @@ Per-attribute diff rendering (table/list/inline). Fills the gap between verbose 
 | `columns` | `csv` | key,old,new | Table-mode columns. |
 | `max` | `int` | 0 (no limit) | Cap rows; truncation marker `… N more attributes`. |
 | `truncate` | `int` | 60 | Max characters per before/after cell (0 disables). |
+| `where` | `string` | — | HCL predicate evaluated per attribute with `self` bound to the Attribute tree node (`self.key`, `self.sensitive`, `self.computed`, `self.description`). Composes AND with `addresses` and `actions`. E.g. `self.sensitive`, `!self.computed`, `contains(["tags", "location"], self.key)`. |
 
 **Columns** (for the `columns` csv arg):
 
@@ -129,6 +130,7 @@ Collapses resources with identical change fingerprints into grouped rows. Single
 | `columns` | `csv` | pattern,count,sample | Column subset for the collapsed-changes table. |
 | `threshold` | `int` | 2 | Only collapse when group size ≥ threshold. |
 | `actions` | `csv` | update,delete,replace | Which actions participate in fingerprint grouping. |
+| `where` | `string` | — | HCL predicate evaluated per resource (`self` bound to the tree node). Composes AND with `actions`. E.g. `self.impact == "critical"`, `contains(["azurerm_subnet"], self.resource_type)`. See `core.NodeValue` for the `self` field set. |
 
 **Columns** (for the `columns` csv arg):
 
@@ -230,6 +232,7 @@ One section per module group (collapsible <details> on GitHub targets, flat H3 o
 | `actions` | `csv` | (all) | Filter: keep only resources whose action is in the set. |
 | `impact` | `csv` | (all) | Filter: keep only resources whose Impact is in the set. |
 | `max` | `int` | 0 (no limit) | Cap resources per module section; extras collapse into `… N more resources`. |
+| `where` | `string` | — | HCL predicate evaluated per resource (`self` bound to the tree node). Composes AND with `actions` and `impact`. Modules disappear when every resource is filtered out. E.g. `self.is_import \|\| contains(["critical","high"], self.impact)`. |
 | `changed_attrs_display` | `string` | (cfg.Output.ChangedAttrsDisplay or `dash`) | How the `changed` column / `[attrs]` suffix renders for create/delete rows: `dash` (—), `wordy` (new/removed), `count` (N attrs), `list` (legacy full keys-list). Update/replace always show keys-list. |
 
 **Columns** (for the `columns` csv arg):
