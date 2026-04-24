@@ -1,0 +1,189 @@
+{
+  "format_version": "1.2",
+  "terraform_version": "1.9.0",
+  "planned_values": {},
+  "resource_changes": [
+    {
+      "address": "azurerm_resource_group.root",
+      "module_address": "",
+      "type": "azurerm_resource_group",
+      "name": "root",
+      "provider_name": "registry.terraform.io/hashicorp/azurerm",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {
+          "name": "rg-root",
+          "location": "uksouth",
+          "tags": {"env": "prod"}
+        },
+        "after_unknown": {
+          "id": true
+        },
+        "before_sensitive": {},
+        "after_sensitive": {}
+      }
+    },
+    {
+      "address": "module.platform.module.vnet.azurerm_virtual_network.hub",
+      "module_address": "module.platform.module.vnet",
+      "type": "azurerm_virtual_network",
+      "name": "hub",
+      "provider_name": "registry.terraform.io/hashicorp/azurerm",
+      "change": {
+        "actions": ["update"],
+        "before": {
+          "name": "vnet-hub",
+          "address_space": ["10.0.0.0/16"],
+          "tags": {"env": "prod"}
+        },
+        "after": {
+          "name": "vnet-hub",
+          "address_space": ["10.0.0.0/16", "10.1.0.0/16"],
+          "tags": {"env": "prod", "tier": "platform"}
+        },
+        "after_unknown": {},
+        "before_sensitive": {},
+        "after_sensitive": {}
+      }
+    },
+    {
+      "address": "module.compute.azurerm_network_interface.vm",
+      "module_address": "module.compute",
+      "type": "azurerm_network_interface",
+      "name": "vm",
+      "provider_name": "registry.terraform.io/hashicorp/azurerm",
+      "change": {
+        "actions": ["delete", "create"],
+        "before": {
+          "name": "nic-vm",
+          "ip_configuration": [{"subnet_id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-old/providers/Microsoft.Network/virtualNetworks/vnet/subnets/old"}]
+        },
+        "after": {
+          "name": "nic-vm",
+          "ip_configuration": [{"subnet_id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-new/providers/Microsoft.Network/virtualNetworks/vnet/subnets/new"}]
+        },
+        "after_unknown": {
+          "id": true,
+          "mac_address": true
+        },
+        "before_sensitive": {},
+        "after_sensitive": {}
+      }
+    },
+    {
+      "address": "module.identity.azurerm_key_vault.secrets",
+      "module_address": "module.identity",
+      "type": "azurerm_key_vault",
+      "name": "secrets",
+      "provider_name": "registry.terraform.io/hashicorp/azurerm",
+      "change": {
+        "actions": ["update"],
+        "before": {
+          "name": "kv-secrets",
+          "tenant_id": "00000000-0000-0000-0000-000000000000",
+          "access_policy": [{"object_id": "00000000-0000-0000-0000-000000000001"}]
+        },
+        "after": {
+          "name": "kv-secrets",
+          "tenant_id": "00000000-0000-0000-0000-000000000000",
+          "access_policy": [{"object_id": "00000000-0000-0000-0000-000000000002"}]
+        },
+        "after_unknown": {},
+        "before_sensitive": {
+          "access_policy": [{"object_id": true}]
+        },
+        "after_sensitive": {
+          "access_policy": [{"object_id": true}]
+        }
+      }
+    },
+    {
+      "address": "module.dns.azurerm_private_dns_zone.internal",
+      "module_address": "module.dns",
+      "type": "azurerm_private_dns_zone",
+      "name": "internal",
+      "provider_name": "registry.terraform.io/hashicorp/azurerm",
+      "change": {
+        "actions": ["create"],
+        "before": null,
+        "after": {
+          "name": "internal.example.com",
+          "resource_group_name": "rg-dns"
+        },
+        "after_unknown": {
+          "id": true,
+          "number_of_record_sets": true
+        },
+        "before_sensitive": {},
+        "after_sensitive": {},
+        "importing": {
+          "id": "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg-dns/providers/Microsoft.Network/privateDnsZones/internal.example.com"
+        }
+      }
+    },
+    {
+      "address": "module.legacy.azurerm_route_table.decommissioned",
+      "module_address": "module.legacy",
+      "type": "azurerm_route_table",
+      "name": "decommissioned",
+      "provider_name": "registry.terraform.io/hashicorp/azurerm",
+      "change": {
+        "actions": ["delete"],
+        "before": {
+          "name": "rt-old",
+          "disable_bgp_route_propagation": false
+        },
+        "after": null,
+        "after_unknown": {},
+        "before_sensitive": {},
+        "after_sensitive": {}
+      }
+    },
+    {
+      "address": "data.azurerm_client_config.current",
+      "module_address": "",
+      "type": "azurerm_client_config",
+      "name": "current",
+      "provider_name": "registry.terraform.io/hashicorp/azurerm",
+      "change": {
+        "actions": ["read"],
+        "before": null,
+        "after": null,
+        "after_unknown": {
+          "id": true,
+          "tenant_id": true,
+          "subscription_id": true
+        },
+        "before_sensitive": {},
+        "after_sensitive": {}
+      }
+    }
+  ],
+  "configuration": {
+    "root_module": {
+      "module_calls": {
+        "platform": {
+          "source": "git::https://example.invalid/terraform-modules.git//modules/platform?ref=v1.0.0",
+          "module": {}
+        },
+        "compute": {
+          "source": "./modules/compute",
+          "module": {}
+        },
+        "identity": {
+          "source": "./modules/identity",
+          "module": {}
+        },
+        "dns": {
+          "source": "./modules/dns",
+          "module": {}
+        },
+        "legacy": {
+          "source": "./modules/legacy",
+          "module": {}
+        }
+      }
+    }
+  }
+}
