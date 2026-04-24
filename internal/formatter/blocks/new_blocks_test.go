@@ -1183,9 +1183,9 @@ func importsReport() *core.Report {
 		core.ModuleGroup{
 			Name: "vnet", Path: "module.vnet",
 			Changes: []core.ResourceChange{
-				{Address: "module.vnet.azurerm_subnet.app", ResourceType: "azurerm_subnet", ResourceName: "app", Action: core.ActionNoOp, IsImport: true},
-				{Address: "module.vnet.azurerm_subnet.db", ResourceType: "azurerm_subnet", ResourceName: "db", Action: core.ActionNoOp, IsImport: true},
-				{Address: "module.vnet.azurerm_route.x", ResourceType: "azurerm_route", ResourceName: "x", Action: core.ActionCreate}, // not an import
+				{Address: "module.vnet.azurerm_subnet.app", ModulePath: "module.vnet", ResourceType: "azurerm_subnet", ResourceName: "app", Action: core.ActionNoOp, IsImport: true},
+				{Address: "module.vnet.azurerm_subnet.db", ModulePath: "module.vnet", ResourceType: "azurerm_subnet", ResourceName: "db", Action: core.ActionNoOp, IsImport: true},
+				{Address: "module.vnet.azurerm_route.x", ModulePath: "module.vnet", ResourceType: "azurerm_route", ResourceName: "x", Action: core.ActionCreate}, // not an import
 			},
 			ActionCounts: map[core.Action]int{core.ActionNoOp: 2, core.ActionCreate: 1},
 		},
@@ -1279,6 +1279,37 @@ func TestImportsList_maxTruncates(t *testing.T) {
 	}
 	if !strings.Contains(out, "1 more imports") {
 		t.Errorf("want truncation marker, got:\n%s", out)
+	}
+}
+
+// TestImportsList_TreeAndFallbackProduceIdenticalOutput locks in parity
+// between the tree-backed row collector and the legacy ModuleGroups
+// iteration. If the two paths ever diverge this test fails first,
+// before any golden comparison.
+func TestImportsList_TreeAndFallbackProduceIdenticalOutput(t *testing.T) {
+	r := importsReport()
+
+	fallbackCtx := &BlockContext{Target: "markdown", Report: r}
+	treeCtx := &BlockContext{Target: "markdown", Report: r, Tree: core.BuildTree(r)}
+
+	cases := []map[string]any{
+		nil,
+		{"format": "table"},
+		{"format": "table", "columns": "address,module_path"},
+		{"format": "list", "max": 1},
+	}
+	for _, args := range cases {
+		fallback, err := (ImportsList{}).Render(fallbackCtx, args)
+		if err != nil {
+			t.Fatalf("fallback args=%v: %v", args, err)
+		}
+		tree, err := (ImportsList{}).Render(treeCtx, args)
+		if err != nil {
+			t.Fatalf("tree args=%v: %v", args, err)
+		}
+		if tree != fallback {
+			t.Errorf("tree/fallback divergence args=%v:\n--- tree ---\n%s\n--- fallback ---\n%s", args, tree, fallback)
+		}
 	}
 }
 

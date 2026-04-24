@@ -135,9 +135,18 @@ func buildReportNode(r *Report) *Node {
 	// Walk every module group and insert its resources at the right
 	// depth. ModuleCall / ModuleInstance nodes are created on demand and
 	// shared across groups that live under the same call.
+	//
+	// mg.Module is the authoritative source when set (populated by
+	// GroupByModule). For hand-crafted ModuleGroups (tests, legacy
+	// callers) we fall back to parsing mg.Path so the resulting tree
+	// still reflects the intended module nesting.
 	for i := range r.ModuleGroups {
 		mg := &r.ModuleGroups[i]
-		parent := insertModulePath(node, mg.Module)
+		m := mg.Module
+		if m.Address == "" && mg.Path != "" {
+			m = ParseModuleAddress(unwrapSentinelPath(mg.Path))
+		}
+		parent := insertModulePath(node, m)
 		for j := range mg.Changes {
 			parent.Children = append(parent.Children, buildResourceNode(r, &mg.Changes[j], parent))
 		}
@@ -204,6 +213,16 @@ func insertModulePath(root *Node, m Module) *Node {
 		current = inst
 	}
 	return current
+}
+
+// unwrapSentinelPath maps the grouper's "(root)" sentinel back to the
+// empty string that ParseModuleAddress expects. Kept local to tree.go
+// so the root-sentinel convention stays isolated from the Module parser.
+func unwrapSentinelPath(path string) string {
+	if path == "(root)" {
+		return ""
+	}
+	return path
 }
 
 func findChild(parent *Node, kind NodeKind, name string) *Node {
