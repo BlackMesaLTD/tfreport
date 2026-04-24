@@ -173,13 +173,13 @@ Opt-in blockquote defining tfreport's action + impact vocabulary. Never in defau
 
 ### `imports_list`
 
-Enumerates resources with `IsImport=true` across all module groups. Bulleted list by default; table with pluggable columns when `format=table`.
+Enumerates resources with `IsImport=true` across all module groups. Bulleted list by default; table with pluggable columns when `format=table` (delegates to the shared `table` renderer).
 
 **Args:**
 
 | Name | Type | Default | Description |
 |------|------|---------|-------------|
-| `format` | `string` | list | One of `list` (bullet points) or `table` (markdown table). |
+| `format` | `string` | list | One of `list` (bullet points) or `table` (markdown table via the shared `table` renderer). |
 | `columns` | `csv` | address,resource_type,module | Table-mode columns. |
 | `max` | `int` | 0 (no limit) | Cap rows; truncated rows collapse into `… N more imports`. |
 
@@ -437,7 +437,7 @@ Generic tree-query-backed markdown table. Select nodes via a path, optionally fi
 | `report:resources` | Resources | `*core.Report.TotalResources` (non-read resource count). |
 | `report:subscription` | Subscription | Report label or `default` when unlabelled. |
 | `resource:action` | Action | Emoji + lowercase action name (create, update, delete, replace, read). |
-| `resource:address` | Resource | Full terraform address, rendered as `inline code`. |
+| `resource:address` | Address | Full terraform address, rendered as `inline code`. |
 | `resource:impact` | Impact | Emoji + lowercase impact level (critical, high, medium, low, none). |
 
 
