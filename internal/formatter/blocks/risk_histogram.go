@@ -19,6 +19,14 @@ import (
 //	style         string (default "bar")
 //	include_none  bool   (default false) \u2014 include impact=none (no-op) in output
 //	max_bar       int    (default 40)     \u2014 cap bar length to avoid overflow
+//	where         string (default "")     \u2014 HCL predicate evaluated per resource
+//	    with `self` bound to the Resource tree node. Only resources where
+//	    the predicate returns true contribute to the tally. Useful for
+//	    distributions over a subset:
+//
+//	        where: self.is_import
+//	        where: self.module_path == "module.platform"
+//	        where: contains(["azurerm_subnet", "azurerm_nsg"], self.resource_type)
 type RiskHistogram struct{}
 
 func (RiskHistogram) Name() string { return "risk_histogram" }
@@ -41,7 +49,15 @@ func (RiskHistogram) Render(ctx *BlockContext, args map[string]any) (string, err
 	includeNone := ArgBool(args, "include_none", false)
 	maxBar := ArgInt(args, "max_bar", 40)
 
-	counts := tallyImpacts(ctx)
+	whereExpr, err := parseWhereArg(args, "risk_histogram")
+	if err != nil {
+		return "", err
+	}
+
+	counts, err := tallyImpacts(ctx, whereExpr)
+	if err != nil {
+		return "", err
+	}
 
 	order := []riskRow{
 		{"🔴 critical", counts[core.ImpactCritical], core.ImpactCritical},
@@ -110,16 +126,73 @@ func renderRiskCell(row riskRow, col string, maxBar int) string {
 }
 
 // tallyImpacts counts resources by impact across all reports in ctx.
-func tallyImpacts(ctx *BlockContext) map[core.Impact]int {
+// When whereExpr is set, each resource is evaluated against the
+// predicate with `self` bound to the Resource tree node; only true
+// evaluations contribute to the tally. whereExpr=nil keeps the
+// existing full-tally fast path.
+func tallyImpacts(ctx *BlockContext, whereExpr *core.Expr) (map[core.Impact]int, error) {
 	counts := map[core.Impact]int{}
-	for _, r := range allReports(ctx) {
+	reports := allReports(ctx)
+	for _, r := range reports {
+		var idx map[string]*core.Node
+		if whereExpr != nil {
+			// Per-report index so each Resource resolves to the node
+			// under its own Report subtree — matters in multi-report
+			// where two reports can share a resource address.
+			idx = perReportResourceIndex(ctx, r)
+		}
 		for _, mg := range r.ModuleGroups {
 			for _, rc := range mg.Changes {
+				if whereExpr != nil {
+					keep, err := evalResourceWhere(whereExpr, idx, rc, "risk_histogram")
+					if err != nil {
+						return nil, err
+					}
+					if !keep {
+						continue
+					}
+				}
 				counts[rc.Impact]++
 			}
 		}
 	}
-	return counts
+	return counts, nil
+}
+
+// perReportResourceIndex returns a map of address → Resource Node for
+// the specific report r. In single-report mode it reuses the ctx's
+// subtree; in multi-report mode it walks the Reports root to find r's
+// subtree. Falls back to building a standalone tree for r if ctx has
+// none bound.
+func perReportResourceIndex(ctx *BlockContext, r *core.Report) map[string]*core.Node {
+	var root *core.Node
+	if ctx.Tree != nil && ctx.Tree.Root != nil {
+		switch ctx.Tree.Root.Kind {
+		case core.KindReport:
+			root = ctx.Tree.Root
+		case core.KindReports:
+			for _, c := range ctx.Tree.Root.Children {
+				if c.Kind != core.KindReport {
+					continue
+				}
+				if payload, ok := c.Payload.(*core.Report); ok && payload == r {
+					root = c
+					break
+				}
+			}
+		}
+	}
+	if root == nil {
+		root = core.BuildTree(r).Root
+	}
+	if root == nil {
+		return nil
+	}
+	idx := make(map[string]*core.Node)
+	for _, n := range core.Query(root, core.Path{core.KindResource}) {
+		idx[n.Name] = n
+	}
+	return idx
 }
 
 // renderBar returns a bar of solid blocks, capped at cap. Uses count directly
@@ -154,6 +227,7 @@ func (RiskHistogram) Doc() BlockDoc {
 			{Name: "columns", Type: "csv", Default: "(bar: impact,count,bar; table: impact,count)", Description: "Subset of columns for table/bar styles. Ignored for inline."},
 			{Name: "include_none", Type: "bool", Default: "false", Description: "Include `impact=none` (no-op) in output."},
 			{Name: "max_bar", Type: "int", Default: "40", Description: "Cap bar length; counts above this truncate with a `+` marker."},
+			{Name: "where", Type: "string", Default: "", Description: "HCL predicate evaluated per resource (`self` bound to the Resource tree node). Only matching resources contribute to the tally. E.g. `self.is_import`, `contains([\"azurerm_subnet\"], self.resource_type)`."},
 		},
 		Columns: []ColumnDoc{
 			{ID: "impact", Heading: "Impact", Description: "Impact label (emoji + name)."},

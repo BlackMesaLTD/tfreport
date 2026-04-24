@@ -48,6 +48,7 @@ Conditional callout line. Returns empty when no trigger matches — safe to incl
 | `icon` | `string` | (style-derived) | Override the leading emoji. |
 | `if_impact` | `csv` | (none) | Fire when any report's MaxImpact is in the set (e.g. `critical,high`). |
 | `if_action_gt` | `csv` | (none) | Flat `action:N,action:N` syntax. Fire when action_count(action) > N. |
+| `show_if` | `string` | (none) | HCL predicate evaluated per Report with `self` bound to the Report tree root. Fires when any report's evaluation is true. Composes OR with the CSV triggers. Idiomatic: `contains(["critical","high"], self.max_impact)`, `self.action_counts.delete > 0`. |
 
 **Example:**
 
@@ -326,6 +327,7 @@ Impact-level distribution across all resources in scope. Three visual styles (ba
 | `columns` | `csv` | (bar: impact,count,bar; table: impact,count) | Subset of columns for table/bar styles. Ignored for inline. |
 | `include_none` | `bool` | false | Include `impact=none` (no-op) in output. |
 | `max_bar` | `int` | 40 | Cap bar length; counts above this truncate with a `+` marker. |
+| `where` | `string` | — | HCL predicate evaluated per resource (`self` bound to the Resource tree node). Only matching resources contribute to the tally. E.g. `self.is_import`, `contains(["azurerm_subnet"], self.resource_type)`. |
 
 **Columns** (for the `columns` csv arg):
 
