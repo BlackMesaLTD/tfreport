@@ -416,7 +416,9 @@ Generic tree-query-backed markdown table. Select nodes via a path, optionally fi
 | `limit` | `int` | 0 | Cap the row count. `<= 0` means no cap. |
 | `columns` | `csv` | (kind-dependent) | Ordered column ids. Valid ids depend on the row kind (the final Path step). |
 | `heading` | `string` | — | Inserts `### heading` above the table when non-empty. |
-| `empty` | `string` | — | Rendered when zero rows match. Blank by default — caller's template handles absence. |
+| `empty` | `string` | — | Rendered when zero rows match AND used as the cell fallback for any column renderer that returns an empty string. Blank by default. |
+| `truncated_noun` | `string` | (kind-derived) | Noun used in the `… N more {noun} not shown` row appended when `limit` truncates output. Default derives from the row kind: resources / attributes / changes / module(s) / reports. |
+| `changed_attrs_display` | `string` | (from ctx.Output) | Mode override for columns that render changed-attribute unions: `dash`, `wordy`, `count`, `list`. Propagates to cell renderers via shallow-copied ctx. |
 | `report` | `*core.Report` | (all reports) | Scope the query to one report's subtree. Accepts `$r` inside a `{{ range .Reports }}` loop — matches the legacy `modules_table "report" $r` convention so existing templates migrate with minimal rewiring. |
 
 **Columns** (for the `columns` csv arg):

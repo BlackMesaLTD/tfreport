@@ -354,18 +354,138 @@ func moduleInstanceColumns() map[string]tableColumn {
 		},
 		"changed_attrs": {
 			Heading:     "Changed attributes",
-			Description: "Union of changed attribute keys across the instance's resources, backticked, comma-joined.",
-			Render: func(_ *BlockContext, n *core.Node) string {
-				if len(n.Agg.ChangedAttrs) == 0 {
-					return "—"
-				}
-				parts := make([]string, len(n.Agg.ChangedAttrs))
-				for i, k := range n.Agg.ChangedAttrs {
-					parts[i] = "`" + k + "`"
-				}
-				return strings.Join(parts, ", ")
+			Description: "Union of changed attribute keys across the instance's resources — honours ctx.Output.ChangedAttrsDisplay (dash / wordy / count / list). Matches legacy modules_table grammar.",
+			Render: func(ctx *BlockContext, n *core.Node) string {
+				mode := resolveChangedAttrsMode(ctx, "")
+				return renderModuleNodeChangedAttrs(n, mode)
 			},
 		},
+	}
+}
+
+// renderModuleNodeChangedAttrs implements modules_table's target-aware
+// changed_attrs grammar over a ModuleInstance tree node. Ported from
+// renderModulesTableChangedAttrs so modules_table can delegate to the
+// `table` block without losing its empty-group placeholder semantics.
+//
+// Behaviour:
+//   - list mode → union of ALL child resources' attribute keys
+//   - other modes → union of UPDATE/REPLACE resources' keys; when the
+//     instance has no update/replace resources, render a placeholder
+//     per mode (wordy: new/removed/new+removed; count: N attrs; dash: —)
+func renderModuleNodeChangedAttrs(n *core.Node, mode string) string {
+	if mode == "" {
+		mode = ChangedAttrsDash
+	}
+
+	if mode == ChangedAttrsList {
+		return unionAttrKeysFromNode(n, false)
+	}
+
+	// Partition resources into meaningful (update/replace) vs compact
+	// (create/delete/read/no-op). If any meaningful exist, render their
+	// union only — matches modules_table's partitioning.
+	var meaningfulAttrs []core.ChangedAttribute
+	var creates, deletes int
+	for _, c := range n.Children {
+		if c.Kind != core.KindResource {
+			continue
+		}
+		rc, ok := c.Payload.(*core.ResourceChange)
+		if !ok || rc == nil {
+			continue
+		}
+		switch rc.Action {
+		case core.ActionUpdate, core.ActionReplace:
+			meaningfulAttrs = append(meaningfulAttrs, rc.ChangedAttributes...)
+		case core.ActionCreate:
+			creates++
+		case core.ActionDelete:
+			deletes++
+		}
+	}
+	if len(meaningfulAttrs) > 0 {
+		return unionAttrKeysFromSlice(meaningfulAttrs)
+	}
+
+	// Whole instance is create/delete/read/no-op. Mode picks the placeholder.
+	switch mode {
+	case ChangedAttrsWordy:
+		switch {
+		case creates > 0 && deletes > 0:
+			return "new+removed"
+		case creates > 0:
+			return "new"
+		case deletes > 0:
+			return "removed"
+		default:
+			return "—"
+		}
+	case ChangedAttrsCount:
+		total := 0
+		for _, c := range n.Children {
+			if c.Kind != core.KindResource {
+				continue
+			}
+			rc, _ := c.Payload.(*core.ResourceChange)
+			if rc != nil {
+				total += len(rc.ChangedAttributes)
+			}
+		}
+		return fmt.Sprintf("%d attrs", total)
+	default:
+		return "—"
+	}
+}
+
+// unionAttrKeysFromNode collects + sorts the backticked union of
+// attribute keys across all Resource children of n. empty result
+// returns "—" as a cell-safe placeholder.
+func unionAttrKeysFromNode(n *core.Node, _ bool) string {
+	var all []core.ChangedAttribute
+	for _, c := range n.Children {
+		if c.Kind != core.KindResource {
+			continue
+		}
+		rc, _ := c.Payload.(*core.ResourceChange)
+		if rc != nil {
+			all = append(all, rc.ChangedAttributes...)
+		}
+	}
+	return unionAttrKeysFromSlice(all)
+}
+
+// unionAttrKeysFromSlice dedups+sorts+backticks attribute keys.
+// Empty input returns "—" (cell-safe fallback).
+func unionAttrKeysFromSlice(attrs []core.ChangedAttribute) string {
+	if len(attrs) == 0 {
+		return "—"
+	}
+	seen := map[string]struct{}{}
+	for _, a := range attrs {
+		seen[a.Key] = struct{}{}
+	}
+	keys := make([]string, 0, len(seen))
+	for k := range seen {
+		keys = append(keys, k)
+	}
+	sortStrings(keys)
+	parts := make([]string, len(keys))
+	for i, k := range keys {
+		parts[i] = "`" + k + "`"
+	}
+	return strings.Join(parts, ", ")
+}
+
+// sortStrings is a tiny wrapper around sort.Strings so we can keep
+// the import list in this file minimal. Using sort directly would
+// force an import rearrangement in every render function.
+func sortStrings(s []string) {
+	// insertion sort — inputs are small attribute-key lists
+	for i := 1; i < len(s); i++ {
+		for j := i; j > 0 && s[j-1] > s[j]; j-- {
+			s[j-1], s[j] = s[j], s[j-1]
+		}
 	}
 }
 
