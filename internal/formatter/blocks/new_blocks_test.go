@@ -2643,6 +2643,25 @@ func TestPerReport_unknownShowItem(t *testing.T) {
 	}
 }
 
+// TestPerReport_LegacyShowNamesRejected pins the pre-v0.3.0 surface
+// reduction: summary_table and changed_resources_table are no longer
+// accepted in show=. The error should include enough context that a
+// user knows to migrate to a hand-rolled `{{ table ... }}` call.
+func TestPerReport_LegacyShowNamesRejected(t *testing.T) {
+	r := makePerReportReport("sub-a")
+	for _, legacy := range []string{"summary_table", "changed_resources_table"} {
+		_, err := PerReport{}.Render(&BlockContext{Target: "markdown", Report: r},
+			map[string]any{"report": r, "show": legacy})
+		if err == nil {
+			t.Errorf("legacy show=%q should be rejected", legacy)
+			continue
+		}
+		if !strings.Contains(err.Error(), legacy) {
+			t.Errorf("error should name the legacy item %q: %v", legacy, err)
+		}
+	}
+}
+
 func TestPerReport_markdownH2WithBullets(t *testing.T) {
 	r := makePerReportReport("sub-a")
 	out, err := PerReport{}.Render(&BlockContext{Target: "markdown", Report: r},

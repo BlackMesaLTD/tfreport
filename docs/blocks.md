@@ -299,7 +299,7 @@ One 'report card' section for a single report. Declarative replacement for the {
 | Name | Type | Default | Description |
 |------|------|---------|-------------|
 | `report` | `*core.Report` | — | Required. The report to render; pass `$r` from range .Reports. |
-| `show` | `csv` | key_changes | Inner blocks to compose: key_changes, summary_table, module_details, changed_resources_table, text_plan, instance_detail. |
+| `show` | `csv` | key_changes | Inner blocks to compose: key_changes, module_details, text_plan, instance_detail. |
 | `collapse` | `bool` | (target uses <details>) | Force wrap/unwrap in <details>. Rarely set explicitly. |
 
 
