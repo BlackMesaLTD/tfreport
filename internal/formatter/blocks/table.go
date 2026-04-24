@@ -24,8 +24,17 @@ import (
 //	    depend on the last Path step's kind.
 //	heading (string, optional)  — inserts `### heading\n\n` above the
 //	    table. Empty (default) emits no heading.
-//	empty   (string, optional)  — emitted when zero rows match. Default
+//	empty   (string, optional)  — emitted when zero rows match AND used
+//	    as the fallback for any column cell that renders to "". Default
 //	    empty string — caller's template composes around absence.
+//	truncated_noun (string, optional) — noun used in the "… N more
+//	    {noun} not shown" row appended when `limit` truncates output.
+//	    Default: derived from the row kind (e.g. "modules" for
+//	    module_instance, "resources" for resource).
+//	changed_attrs_display (string, optional) — mode override for any
+//	    cell that renders a union of changed-attribute keys. Valid
+//	    values: dash, wordy, count, list. Propagates through the cell
+//	    renderer via a shallow-copied ctx so column code stays stateless.
 //
 //	report  (*core.Report, optional) — scope the query to one specific
 //	    report's subtree. Accepts `$r` inside a `{{ range .Reports }}`
@@ -122,13 +131,30 @@ func (Table) Render(ctx *BlockContext, args map[string]any) (string, error) {
 		}
 	}
 
-	if n := ArgInt(args, "limit", 0); n > 0 {
+	// Propagate `changed_attrs_display` override via a shallow-copied
+	// ctx so column render functions read ctx.Output.ChangedAttrsDisplay
+	// without needing args threaded through every signature.
+	if modeArg := ArgString(args, "changed_attrs_display", ""); modeArg != "" {
+		if err := validChangedAttrsMode("table", modeArg); err != nil {
+			return "", err
+		}
+		cp := *ctx
+		cp.Output.ChangedAttrsDisplay = modeArg
+		ctx = &cp
+	}
+
+	totalRows := len(nodes)
+	truncated := 0
+	if n := ArgInt(args, "limit", 0); n > 0 && totalRows > n {
+		truncated = totalRows - n
 		nodes = core.Limit(nodes, n)
 	}
 
 	if len(nodes) == 0 {
 		return ArgString(args, "empty", ""), nil
 	}
+
+	empty := ArgString(args, "empty", "")
 
 	// Build header + rows.
 	var b strings.Builder
@@ -143,11 +169,51 @@ func (Table) Render(ctx *BlockContext, args map[string]any) (string, error) {
 	for _, n := range nodes {
 		b.WriteString("|")
 		for _, id := range colIDs {
-			fmt.Fprintf(&b, " %s |", tableColumns[rowKind][id].Render(ctx, n))
+			cell := tableColumns[rowKind][id].Render(ctx, n)
+			if cell == "" && empty != "" {
+				cell = empty
+			}
+			fmt.Fprintf(&b, " %s |", cell)
+		}
+		b.WriteString("\n")
+	}
+
+	// Truncation marker when limit clipped rows — mirrors the legacy
+	// modules_table / changed_resources_table grammar so thin-wrapper
+	// migrations stay byte-exact.
+	if truncated > 0 {
+		noun := ArgString(args, "truncated_noun", defaultTruncatedNoun(rowKind))
+		b.WriteString("|")
+		for i := range colIDs {
+			if i == 0 {
+				fmt.Fprintf(&b, " … %d more %s not shown |", truncated, noun)
+			} else {
+				b.WriteString(" |")
+			}
 		}
 		b.WriteString("\n")
 	}
 	return strings.TrimRight(b.String(), "\n"), nil
+}
+
+// defaultTruncatedNoun picks a plural noun for the truncation row
+// based on the row kind. Callers can override via the `truncated_noun`
+// arg.
+func defaultTruncatedNoun(kind core.NodeKind) string {
+	switch kind {
+	case core.KindResource:
+		return "resources"
+	case core.KindAttribute:
+		return "attributes"
+	case core.KindKeyChange:
+		return "changes"
+	case core.KindModuleInstance:
+		return "module(s)"
+	case core.KindReport:
+		return "reports"
+	default:
+		return "rows"
+	}
 }
 
 func (Table) Doc() BlockDoc {
@@ -162,7 +228,9 @@ func (Table) Doc() BlockDoc {
 			{Name: "limit", Type: "int", Default: "0", Description: "Cap the row count. `<= 0` means no cap."},
 			{Name: "columns", Type: "csv", Default: "(kind-dependent)", Description: "Ordered column ids. Valid ids depend on the row kind (the final Path step)."},
 			{Name: "heading", Type: "string", Default: "", Description: "Inserts `### heading` above the table when non-empty."},
-			{Name: "empty", Type: "string", Default: "", Description: "Rendered when zero rows match. Blank by default — caller's template handles absence."},
+			{Name: "empty", Type: "string", Default: "", Description: "Rendered when zero rows match AND used as the cell fallback for any column renderer that returns an empty string. Blank by default."},
+			{Name: "truncated_noun", Type: "string", Default: "(kind-derived)", Description: "Noun used in the `… N more {noun} not shown` row appended when `limit` truncates output. Default derives from the row kind: resources / attributes / changes / module(s) / reports."},
+			{Name: "changed_attrs_display", Type: "string", Default: "(from ctx.Output)", Description: "Mode override for columns that render changed-attribute unions: `dash`, `wordy`, `count`, `list`. Propagates to cell renderers via shallow-copied ctx."},
 			{Name: "report", Type: "*core.Report", Default: "(all reports)", Description: "Scope the query to one report's subtree. Accepts `$r` inside a `{{ range .Reports }}` loop — matches the legacy `modules_table \"report\" $r` convention so existing templates migrate with minimal rewiring."},
 		},
 		Columns: tableColumnDocs(),

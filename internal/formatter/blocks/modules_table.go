@@ -43,34 +43,22 @@ type ModulesTable struct{}
 func (ModulesTable) Name() string { return "modules_table" }
 
 func (ModulesTable) Render(ctx *BlockContext, args map[string]any) (string, error) {
-	var r *core.Report
+	// modules_table is now a thin adapter over the `table` block — same
+	// columns, same mode-aware changed_attrs grammar, same truncation
+	// footer. The ONLY transform is column-id validation against this
+	// block's historic allowlist (moduleColumns map) so unknown ids
+	// produce the same "modules_table: unknown column %q" error users
+	// depended on.
 	if v, ok := args["report"]; ok && v != nil {
-		if rr, ok := v.(*core.Report); ok {
-			r = rr
-		} else {
+		if _, ok := v.(*core.Report); !ok {
 			return "", fmt.Errorf("modules_table: 'report' arg must be a *core.Report, got %T", v)
 		}
-	}
-	if r == nil {
-		r = currentReport(ctx)
-	}
-	if r == nil || len(r.ModuleGroups) == 0 {
-		return "", nil
 	}
 
 	cols := ArgCSV(args, "columns")
 	if len(cols) == 0 {
 		cols = []string{"module", "changed_attrs"}
 	}
-	max := ArgInt(args, "max", 0)
-	empty := ArgString(args, "empty", "—")
-
-	changedMode := ArgString(args, "changed_attrs_display", "")
-	if err := validChangedAttrsMode("modules_table", changedMode); err != nil {
-		return "", err
-	}
-	changedMode = resolveChangedAttrsMode(ctx, changedMode)
-
 	for _, c := range cols {
 		if _, ok := moduleColumns[c]; !ok {
 			return "", fmt.Errorf("modules_table: unknown column %q (valid: %s)",
@@ -78,51 +66,58 @@ func (ModulesTable) Render(ctx *BlockContext, args map[string]any) (string, erro
 		}
 	}
 
-	var b strings.Builder
-
-	// Header row
-	b.WriteString("|")
-	for _, c := range cols {
-		fmt.Fprintf(&b, " %s |", moduleColumns[c].heading)
-	}
-	b.WriteString("\n|")
-	for range cols {
-		b.WriteString("---|")
-	}
-	b.WriteString("\n")
-
-	groups := r.ModuleGroups
-	truncated := 0
-	if max > 0 && len(groups) > max {
-		truncated = len(groups) - max
-		groups = groups[:max]
+	changedMode := ArgString(args, "changed_attrs_display", "")
+	if err := validChangedAttrsMode("modules_table", changedMode); err != nil {
+		return "", err
 	}
 
-	for _, mg := range groups {
-		b.WriteString("|")
-		for _, c := range cols {
-			cell := moduleColumns[c].render(mg, r, changedMode)
-			if cell == "" {
-				cell = empty
-			}
-			fmt.Fprintf(&b, " %s |", cell)
-		}
-		b.WriteString("\n")
+	// Short-circuit when there's no report to render against — match
+	// the legacy guard so callers see identical empty output.
+	r := currentReport(ctx)
+	if v, ok := args["report"]; ok && v != nil {
+		r, _ = v.(*core.Report)
+	}
+	if r == nil || len(r.ModuleGroups) == 0 {
+		return "", nil
 	}
 
-	if truncated > 0 {
-		b.WriteString("|")
-		for i := range cols {
-			if i == 0 {
-				fmt.Fprintf(&b, " … %d more module(s) not shown |", truncated)
-			} else {
-				b.WriteString(" |")
-			}
-		}
-		b.WriteString("\n")
+	// Table requires ctx.Tree to query from. When callers pass a raw
+	// Report without going through configureTemplateFormatter (unit
+	// tests, older single-report call paths) we build a tree on-demand
+	// so the wrapper behaves identically from the caller's perspective.
+	inner := ctx
+	if inner.Tree == nil || inner.Tree.Root == nil {
+		cp := *ctx
+		cp.Tree = core.BuildTree(r)
+		inner = &cp
 	}
 
-	return b.String(), nil
+	tableArgs := map[string]any{
+		"source":         "module_instance",
+		"columns":        strings.Join(cols, ","),
+		"empty":          ArgString(args, "empty", "—"),
+		"truncated_noun": "module(s) not shown",
+	}
+	if rptArg, ok := args["report"]; ok && rptArg != nil {
+		tableArgs["report"] = rptArg
+	} else {
+		tableArgs["report"] = r
+	}
+	if m := ArgInt(args, "max", 0); m > 0 {
+		tableArgs["limit"] = m
+	}
+	if changedMode != "" {
+		tableArgs["changed_attrs_display"] = changedMode
+	}
+
+	out, err := (Table{}).Render(inner, tableArgs)
+	if err != nil {
+		return "", err
+	}
+	// Legacy modules_table ended with a trailing "\n"; table's
+	// TrimRight strips it. Re-append so golden output matches any
+	// template that concatenated modules_table directly.
+	return out + "\n", nil
 }
 
 type moduleColumn struct {
