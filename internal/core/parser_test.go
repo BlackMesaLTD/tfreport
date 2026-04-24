@@ -3,6 +3,8 @@ package core
 import (
 	"os"
 	"testing"
+
+	tfjson "github.com/hashicorp/terraform-json"
 )
 
 func TestParsePlan(t *testing.T) {
@@ -207,25 +209,6 @@ func TestParsePlanMissingVersion(t *testing.T) {
 	}
 }
 
-func TestExtractModulePath(t *testing.T) {
-	tests := []struct {
-		address string
-		want    string
-	}{
-		{"azurerm_subnet.app", ""},
-		{"module.vnet.azurerm_subnet.app", "module.vnet"},
-		{"module.a.module.b.azurerm_subnet.app", "module.a.module.b"},
-		{"module.a.module.b.module.c.azurerm_subnet.app", "module.a.module.b.module.c"},
-	}
-
-	for _, tt := range tests {
-		got := extractModulePath(tt.address)
-		if got != tt.want {
-			t.Errorf("extractModulePath(%q) = %q, want %q", tt.address, got, tt.want)
-		}
-	}
-}
-
 func TestParseModuleSources(t *testing.T) {
 	// Monorepo-style mix: local paths dominate (most common in real repos),
 	// plus one registry reference and one parent-dir path. Covers the source
@@ -323,26 +306,26 @@ func TestExtractModuleType(t *testing.T) {
 	}
 }
 
-func TestMapActions(t *testing.T) {
+func TestMapTfAction(t *testing.T) {
 	tests := []struct {
-		actions []string
+		actions tfjson.Actions
 		want    Action
 	}{
-		{[]string{"create"}, ActionCreate},
-		{[]string{"update"}, ActionUpdate},
-		{[]string{"delete"}, ActionDelete},
-		{[]string{"read"}, ActionRead},
-		{[]string{"no-op"}, ActionNoOp},
-		{[]string{"delete", "create"}, ActionReplace},
-		{[]string{"create", "delete"}, ActionReplace},
-		{[]string{}, ActionNoOp},
+		{tfjson.Actions{tfjson.ActionCreate}, ActionCreate},
+		{tfjson.Actions{tfjson.ActionUpdate}, ActionUpdate},
+		{tfjson.Actions{tfjson.ActionDelete}, ActionDelete},
+		{tfjson.Actions{tfjson.ActionRead}, ActionRead},
+		{tfjson.Actions{tfjson.ActionNoop}, ActionNoOp},
+		{tfjson.Actions{tfjson.ActionDelete, tfjson.ActionCreate}, ActionReplace},
+		{tfjson.Actions{tfjson.ActionCreate, tfjson.ActionDelete}, ActionReplace},
+		{tfjson.Actions{}, ActionNoOp},
 		{nil, ActionNoOp},
 	}
 
 	for _, tt := range tests {
-		got := mapActions(tt.actions)
+		got := mapTfAction(tt.actions)
 		if got != tt.want {
-			t.Errorf("mapActions(%v) = %q, want %q", tt.actions, got, tt.want)
+			t.Errorf("mapTfAction(%v) = %q, want %q", tt.actions, got, tt.want)
 		}
 	}
 }

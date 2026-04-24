@@ -4,74 +4,26 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	tfjson "github.com/hashicorp/terraform-json"
 )
 
-// planJSON represents the top-level structure of terraform show -json output.
-type planJSON struct {
-	FormatVersion    string               `json:"format_version"`
-	TerraformVersion string               `json:"terraform_version"`
-	ResourceChanges  []resourceChangeJSON `json:"resource_changes"`
-	Configuration    configJSON           `json:"configuration"`
-}
-
-type resourceChangeJSON struct {
-	Address       string     `json:"address"`
-	ModuleAddress string     `json:"module_address"`
-	Type          string     `json:"type"`
-	Name          string     `json:"name"`
-	ProviderName  string     `json:"provider_name"`
-	Change        changeJSON `json:"change"`
-}
-
-type changeJSON struct {
-	Actions         []string        `json:"actions"`
-	Before          map[string]any  `json:"before"`
-	After           map[string]any  `json:"after"`
-	AfterUnknown    any             `json:"after_unknown"`
-	BeforeSensitive any             `json:"before_sensitive"`
-	AfterSensitive  any             `json:"after_sensitive"`
-	Importing       *importingJSON  `json:"importing,omitempty"`
-}
-
-// importingJSON mirrors terraform's import marker. Presence of any
-// `importing` object on a change means the resource is being imported
-// into state; absence means not an import. Orthogonal to Actions: a
-// resource can be imported AND updated, imported AND unchanged, etc.
-type importingJSON struct {
-	ID string `json:"id"`
-}
-
-type configJSON struct {
-	RootModule rootModuleJSON `json:"root_module"`
-}
-
-type rootModuleJSON struct {
-	ModuleCalls map[string]moduleCallJSON `json:"module_calls"`
-}
-
-type moduleCallJSON struct {
-	Source string `json:"source"`
-	Module any    `json:"module"`
-}
-
 // ParsePlan parses terraform plan JSON bytes into a slice of ResourceChange.
+// Backed by hashicorp/terraform-json so format-version validation and action
+// classification track upstream Terraform.
 func ParsePlan(data []byte) ([]ResourceChange, error) {
-	var plan planJSON
-	if err := json.Unmarshal(data, &plan); err != nil {
-		return nil, fmt.Errorf("parsing plan JSON: %w", err)
-	}
-
-	if plan.FormatVersion == "" {
-		return nil, fmt.Errorf("missing format_version: input may not be terraform plan JSON")
+	plan, err := decodePlan(data)
+	if err != nil {
+		return nil, err
 	}
 
 	changes := make([]ResourceChange, 0, len(plan.ResourceChanges))
 	for _, rc := range plan.ResourceChanges {
-		action := mapActions(rc.Change.Actions)
-
-		afterUnknown := toStringAnyMap(rc.Change.AfterUnknown)
-
-		change := ResourceChange{
+		if rc == nil || rc.Change == nil {
+			continue
+		}
+		action := mapTfAction(rc.Change.Actions)
+		changes = append(changes, ResourceChange{
 			Address:         rc.Address,
 			ModulePath:      rc.ModuleAddress,
 			ResourceType:    rc.Type,
@@ -80,95 +32,53 @@ func ParsePlan(data []byte) ([]ResourceChange, error) {
 			Action:          action,
 			Impact:          defaultImpact(action),
 			IsImport:        rc.Change.Importing != nil,
-			Before:          rc.Change.Before,
-			After:           rc.Change.After,
-			AfterUnknown:    afterUnknown,
+			Before:          toStringAnyMap(rc.Change.Before),
+			After:           toStringAnyMap(rc.Change.After),
+			AfterUnknown:    toStringAnyMap(rc.Change.AfterUnknown),
 			BeforeSensitive: rc.Change.BeforeSensitive,
 			AfterSensitive:  rc.Change.AfterSensitive,
-		}
-
-		changes = append(changes, change)
+		})
 	}
 
 	return changes, nil
 }
 
-// mapActions converts the terraform plan action array to an Action enum.
-// Plan JSON uses arrays like ["create"], ["update"], ["delete", "create"] (replace).
-func mapActions(actions []string) Action {
-	if len(actions) == 0 {
-		return ActionNoOp
+// decodePlan unmarshals JSON and runs terraform-json's format-version check.
+// A missing format_version is surfaced with a human-facing hint because users
+// frequently pipe the wrong file (terraform output, terraform show without
+// -json, etc.) and the default json-library error is opaque.
+func decodePlan(data []byte) (*tfjson.Plan, error) {
+	var plan tfjson.Plan
+	if err := json.Unmarshal(data, &plan); err != nil {
+		return nil, fmt.Errorf("parsing plan JSON: %w", err)
 	}
-
-	if len(actions) == 1 {
-		switch actions[0] {
-		case "create":
-			return ActionCreate
-		case "update":
-			return ActionUpdate
-		case "delete":
-			return ActionDelete
-		case "read":
-			return ActionRead
-		case "no-op":
-			return ActionNoOp
-		}
+	if plan.FormatVersion == "" {
+		return nil, fmt.Errorf("missing format_version: input may not be terraform plan JSON")
 	}
-
-	// ["delete", "create"] = replace (force new)
-	if len(actions) == 2 {
-		hasDelete := actions[0] == "delete" || actions[1] == "delete"
-		hasCreate := actions[0] == "create" || actions[1] == "create"
-		if hasDelete && hasCreate {
-			return ActionReplace
-		}
+	if err := plan.Validate(); err != nil {
+		return nil, fmt.Errorf("plan format not supported: %w", err)
 	}
-
-	return ActionNoOp
+	return &plan, nil
 }
 
-// extractModulePath extracts the module path from a resource address.
-// "module.virtual_network.azurerm_subnet.app" -> "module.virtual_network"
-// "azurerm_subnet.app" -> "" (root module)
-// "module.a.module.b.azurerm_subnet.app" -> "module.a.module.b"
-func extractModulePath(address string) string {
-	// Find the last occurrence of a resource type pattern (word.word at the end)
-	parts := strings.Split(address, ".")
-	if len(parts) < 2 {
-		return ""
+// mapTfAction collapses terraform-json's Actions slice into our enum.
+// Order matters: Replace() must be checked before the individual helpers
+// because a replace plan satisfies both Delete() and Create().
+func mapTfAction(actions tfjson.Actions) Action {
+	switch {
+	case actions.Replace():
+		return ActionReplace
+	case actions.Create():
+		return ActionCreate
+	case actions.Update():
+		return ActionUpdate
+	case actions.Delete():
+		return ActionDelete
+	case actions.Read():
+		return ActionRead
+	default:
+		return ActionNoOp
 	}
-
-	// Walk backwards to find where the resource type starts.
-	// Module paths always have "module" as a segment.
-	// The resource portion is always type.name (last two parts).
-	// But resource type can contain underscores, not dots.
-	// So the module path is everything before the last type.name pair.
-
-	// Find the last "module." segment by looking for the resource boundary.
-	// The resource address format is: [module.name[.module.name...].]type.name
-	// Where type never starts with "module".
-
-	// Strategy: walk from the end. The last two segments are type.name.
-	// Everything before that is the module path.
-	// But we need to handle indexed resources: module.foo.azurerm_subnet.this["key"]
-
-	// Simple approach: find last occurrence of a segment that looks like a
-	// terraform resource type (contains underscore or starts with a provider prefix).
-	// Actually, the simplest correct approach: module paths consist of
-	// "module.X" pairs. Find the last "module.X" pair boundary.
-
-	moduleEnd := -1
-	for i := 0; i < len(parts)-1; i++ {
-		if parts[i] == "module" {
-			moduleEnd = i + 1 // include the module name
-		}
-	}
-
-	if moduleEnd < 0 {
-		return ""
-	}
-
-	return strings.Join(parts[:moduleEnd+1], ".")
 }
 
 // defaultImpact returns the default impact classification for an action.
@@ -188,22 +98,22 @@ func defaultImpact(action Action) Impact {
 }
 
 // ParseModuleSources extracts top-level module call names to source URLs
-// from the plan JSON's configuration.root_module.module_calls section.
-// Returns an empty map if the configuration section is absent or has no module calls.
+// from the plan's configuration.root_module.module_calls section.
+// Returns an empty map if the configuration section is absent or has no
+// module calls. Errors during decode are swallowed — callers expect a
+// map and module sources are enrichment, not load-bearing.
 func ParseModuleSources(data []byte) map[string]string {
-	var plan planJSON
+	var plan tfjson.Plan
 	if err := json.Unmarshal(data, &plan); err != nil {
 		return map[string]string{}
 	}
-
-	calls := plan.Configuration.RootModule.ModuleCalls
-	if len(calls) == 0 {
+	if plan.Config == nil || plan.Config.RootModule == nil {
 		return map[string]string{}
 	}
-
+	calls := plan.Config.RootModule.ModuleCalls
 	sources := make(map[string]string, len(calls))
 	for name, mc := range calls {
-		if mc.Source != "" {
+		if mc != nil && mc.Source != "" {
 			sources[name] = mc.Source
 		}
 	}
@@ -268,6 +178,9 @@ func ExtractModuleType(source string) string {
 }
 
 // toStringAnyMap converts an any value to map[string]any if possible.
+// terraform-json decodes JSON objects to map[string]interface{}, which is
+// the same underlying type — this assertion is cheap and preserves the
+// existing downstream contract with differ / preserve / summarizer.
 func toStringAnyMap(v any) map[string]any {
 	if v == nil {
 		return nil
