@@ -62,8 +62,41 @@ The `tfreport-from-plan` wrapper is a short shell script — if you go the `go i
 | `github-pr-comment` | Per-module detail with diff blocks |
 | `github-step-summary` | Nested collapsible sections for GitHub Actions summary |
 | `json` | Structured JSON for programmatic consumption (canonical interchange format) |
+| `labels` | Manifest of GitHub PR labels to reconcile (consumed by `scripts/gh_api.py --labels` or the `tfreport-labels` composite action) |
 
 Every non-JSON target is composed from user-overridable Go templates. Filter sections, replace the template inline, or point at a file. See [docs/output-templates.md](docs/output-templates.md) for the block catalog.
+
+### Label management
+
+`--target labels` emits a JSON array of `{name, color, description}` entries — one per report — describing the GitHub labels that should be attached to the current PR. Label names mirror the `git-labeler.py` convention (`[ + ~ - ] <Report.Label>`); colour follows worst-severity (`-` red, `~` amber, `+` green); description ends with the literal sentinel ` [tfreport]` that identifies the label as tfreport-managed.
+
+```bash
+# Single plan
+tfreport --plan-file plan.show.json --label sub-eastus --target labels > labels.json
+
+# Multi-report (one entry per --report-file)
+tfreport --report-file sub-a.json --report-file sub-b.json --target labels > labels.json
+
+# Apply the manifest (JIT upsert + stale-removal)
+python3 scripts/gh_api.py --labels --manifest labels.json \
+  --github-token "$GITHUB_TOKEN" --pr-number 123
+```
+
+Reconciliation is one pass: for every manifest entry the applier upserts the repo label (PATCH-then-POST on 404) and attaches it to the PR; any label whose description ends with ` [tfreport]` and is not in the manifest gets removed. An empty manifest is valid and removes every prior tfreport label from the PR. Labels with non-marker descriptions are left untouched — manual takeover is a strip-the-marker operation.
+
+In CI, the `.github/action/labels` composite action wires this together:
+
+```yaml
+- uses: ./.github/action/labels
+  with:
+    plan-file: plan.show.json
+    label: sub-eastus
+    github-token: ${{ secrets.GITHUB_TOKEN }}
+```
+
+Two layers of test coverage live alongside this:
+- **Offline stub**: `scripts/test_gh_api_e2e.py` runs in `make test-py`, validates the wire contract end-to-end against a stdlib `http.server` stub. No secrets, no network.
+- **Live workflow**: `.github/workflows/labels-e2e.yml` runs against real GitHub on PRs that touch label-management code (paths-filtered) or via `workflow_dispatch`. Creates a unique `live-e2e-pr-<num>` label, verifies attachment + marker description, applies an empty manifest, verifies removal, and cleans up in an `always()` step.
 
 ## Example Output
 

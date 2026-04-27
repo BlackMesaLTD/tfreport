@@ -28,8 +28,16 @@ import os
 import re
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from typing import Any
+
+# Marker that identifies a tfreport-managed GitHub label. Mirrors
+# core.LabelMarker in the Go binary; the Go side stamps this into the
+# manifest description so the applier never has to synthesise it. The
+# applier filters PR labels by description.endswith(LABEL_MARKER) when
+# choosing which labels to reconcile.
+LABEL_MARKER = " [tfreport]"
 
 
 # ---------------------------------------------------------------------------
@@ -62,11 +70,14 @@ class GitAPI:
         url: str,
         method: str = "GET",
         data: dict[str, Any] | None = None,
+        allow_404: bool = False,
     ) -> Any:
         """Execute a single REST call and return the parsed JSON response.
 
         Errors are raised as RuntimeError with the GitHub-provided detail.
-        Callers decide how loudly to fail.
+        Callers decide how loudly to fail. Pass allow_404=True to return None
+        on 404 instead of raising — used by the JIT label upsert path where
+        a missing label is expected and triggers a POST fallback.
         """
         req = urllib.request.Request(url, method=method)
         req.add_header("Authorization", f"Bearer {self.token}")
@@ -80,6 +91,8 @@ class GitAPI:
                 raw = r.read()
                 return json.loads(raw) if raw else None
         except urllib.error.HTTPError as e:
+            if allow_404 and e.code == 404:
+                return None
             detail = e.read().decode("utf-8", errors="replace")
             raise RuntimeError(f"GitHub API {method} {url} failed: {e.code} {detail}") from e
 
@@ -146,6 +159,60 @@ class GitAPI:
                 method="POST",
                 data={"body": new_body},
             )
+
+    # -- Labels -------------------------------------------------------------
+
+    def list_pr_labels(self) -> list[dict[str, Any]]:
+        """Return the labels currently attached to the PR (paginated)."""
+        pr = self._require_pr()
+        out: list[dict[str, Any]] = []
+        page = 1
+        while True:
+            batch = self.request_composer(
+                f"{self.repo_url}/issues/{pr}/labels?per_page=100&page={page}"
+            ) or []
+            if not batch:
+                return out
+            out.extend(batch)
+            if len(batch) < 100:
+                return out
+            page += 1
+
+    def upsert_repo_label(self, name: str, color: str, description: str) -> None:
+        """Ensure the repo label exists with the supplied color/description.
+        PATCH first (warm path); on 404 fall back to POST (cold path)."""
+        encoded = urllib.parse.quote(name, safe="")
+        patched = self.request_composer(
+            f"{self.repo_url}/labels/{encoded}",
+            method="PATCH",
+            data={"color": color, "description": description},
+            allow_404=True,
+        )
+        if patched is None:
+            self.request_composer(
+                f"{self.repo_url}/labels",
+                method="POST",
+                data={"name": name, "color": color, "description": description},
+            )
+
+    def attach_pr_label(self, name: str) -> None:
+        """Attach a label to the PR. GitHub's add-labels endpoint is idempotent."""
+        pr = self._require_pr()
+        self.request_composer(
+            f"{self.repo_url}/issues/{pr}/labels",
+            method="POST",
+            data={"labels": [name]},
+        )
+
+    def detach_pr_label(self, name: str) -> None:
+        """Remove a label from the PR. Tolerates 404 (already gone)."""
+        pr = self._require_pr()
+        encoded = urllib.parse.quote(name, safe="")
+        self.request_composer(
+            f"{self.repo_url}/issues/{pr}/labels/{encoded}",
+            method="DELETE",
+            allow_404=True,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -271,6 +338,78 @@ def strip_marker_prefix(body: str, marker: str) -> str:
     return body
 
 
+def do_labels(args: argparse.Namespace) -> int:
+    """Reconcile a PR's tfreport-managed labels against a manifest.
+
+    Manifest is a JSON array of {name, color, description} entries (emitted
+    by `tfreport --target labels`). The applier:
+      1. JIT-upserts every manifest label in the repo (PATCH-then-POST).
+      2. Attaches every manifest label to the PR (idempotent).
+      3. Lists the PR's current labels, filters by description marker,
+         deletes any marker-stamped label whose name is not in the manifest.
+
+    An empty manifest is valid: it triggers step 3 alone, removing every
+    prior tfreport-marked label from the PR.
+    """
+    if not args.github_token:
+        print("::error::--github-token is required for --labels", file=sys.stderr)
+        return 1
+    if not args.manifest:
+        print("::error::--manifest is required for --labels", file=sys.stderr)
+        return 1
+    if not os.path.isfile(args.manifest):
+        print(f"::error::manifest not found: {args.manifest}", file=sys.stderr)
+        return 1
+
+    with open(args.manifest, encoding="utf-8") as f:
+        try:
+            manifest = json.load(f)
+        except json.JSONDecodeError as e:
+            print(f"::error::manifest is not valid JSON: {e}", file=sys.stderr)
+            return 1
+    if not isinstance(manifest, list):
+        print("::error::manifest must be a JSON array of label specs", file=sys.stderr)
+        return 1
+
+    pr_num = resolve_pr_number(args.pr_number)
+    if not pr_num:
+        print(
+            "::warning::No PR context detected (not triggered by a pull_request/issue event, "
+            "and --pr-number not supplied) — skipping label reconciliation",
+            file=sys.stderr,
+        )
+        return 0
+
+    repo = os.environ.get("GITHUB_REPOSITORY") or ""
+    api = GitAPI(token=args.github_token, repo=repo, pr_number=pr_num)
+
+    desired_names: set[str] = set()
+    for spec in manifest:
+        name = spec.get("name") or ""
+        color = spec.get("color") or ""
+        description = spec.get("description") or ""
+        if not name or not color:
+            print(f"::warning::skipping malformed manifest entry: {spec}", file=sys.stderr)
+            continue
+        api.upsert_repo_label(name, color, description)
+        api.attach_pr_label(name)
+        desired_names.add(name)
+        print(f"labels: applied {name!r} (color {color})", file=sys.stderr)
+
+    current = api.list_pr_labels()
+    for lbl in current:
+        name = lbl.get("name") or ""
+        description = lbl.get("description") or ""
+        if not description.endswith(LABEL_MARKER):
+            continue
+        if name in desired_names:
+            continue
+        api.detach_pr_label(name)
+        print(f"labels: removed stale {name!r}", file=sys.stderr)
+
+    return 0
+
+
 def do_fetch_comment(args: argparse.Namespace) -> int:
     if not args.github_token:
         print("::error::--github-token is required for --fetch-comment", file=sys.stderr)
@@ -303,6 +442,7 @@ def build_parser() -> argparse.ArgumentParser:
     action.add_argument("--send", action="store_true", help="push a rendered snippet to step-summary / PR body / sticky comment")
     action.add_argument("--fetch-body", action="store_true", help="emit current PR body text")
     action.add_argument("--fetch-comment", action="store_true", help="emit body of a sticky PR comment")
+    action.add_argument("--labels", action="store_true", help="reconcile PR labels against a manifest emitted by `tfreport --target labels`")
 
     p.add_argument("--github-token", default=os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN", ""))
     p.add_argument("--pr-number", default="", help="override PR number (auto-detected from GITHUB_EVENT_PATH by default)")
@@ -316,6 +456,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     # --fetch-comment input
     p.add_argument("--marker", default="", help="sticky-comment marker (required for --fetch-comment)")
+
+    # --labels input
+    p.add_argument("--manifest", default="", help="path to a label manifest JSON file (required for --labels)")
 
     return p
 
@@ -332,6 +475,8 @@ def main(argv: list[str] | None = None) -> int:
         return do_fetch_body(args)
     if args.fetch_comment:
         return do_fetch_comment(args)
+    if args.labels:
+        return do_labels(args)
     return 1
 
 

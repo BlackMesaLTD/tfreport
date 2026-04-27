@@ -1,0 +1,128 @@
+name: labels-e2e
+
+# Live end-to-end test for the label-management pipeline against real
+# GitHub. Complements scripts/test_gh_api_e2e.py (offline stub-server
+# integration). Runs only when label code changes (paths filter), or on
+# manual dispatch. Mutates the PR's label set with a unique
+# `live-e2e-pr-<num>` label that is created, verified, then removed and
+# cleaned up in a final always() step — concurrent PR runs don't collide
+# because the label name carries the PR number.
+
+on:
+  pull_request:
+    paths:
+      - 'internal/core/labels.go'
+      - 'internal/core/labels_test.go'
+      - 'internal/formatter/labels.go'
+      - 'internal/formatter/labels_test.go'
+      - 'scripts/gh_api.py'
+      - 'scripts/test_gh_api.py'
+      - 'scripts/test_gh_api_e2e.py'
+      - '.github/action/labels/**'
+      - '.github/workflows/labels-e2e.yml'
+  workflow_dispatch:
+    inputs:
+      pr-number:
+        description: "PR number to operate against"
+        required: true
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: labels-e2e-${{ github.event.pull_request.number || inputs.pr-number }}
+  cancel-in-progress: true
+
+jobs:
+  live-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+
+      - name: Build tfreport
+        run: go build -o tfreport ./cmd/tfreport
+
+      - name: Resolve PR number and label name
+        id: pr
+        env:
+          DISPATCH_PR: ${{ inputs.pr-number }}
+          EVENT_PR: ${{ github.event.pull_request.number }}
+        run: |
+          PR="${EVENT_PR:-$DISPATCH_PR}"
+          if [ -z "$PR" ]; then
+            echo "::error::Could not determine PR number"
+            exit 1
+          fi
+          LABEL="live-e2e-pr-$PR"
+          {
+            echo "pr=$PR"
+            echo "label=$LABEL"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Phase 1 — apply manifest, verify label attached
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ steps.pr.outputs.pr }}
+          LABEL: ${{ steps.pr.outputs.label }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          ./tfreport --plan-file testdata/medium_plan.json --label "$LABEL" --target labels > manifest.json
+          echo "manifest:"
+          cat manifest.json
+          EXPECTED=$(jq -r '.[0].name' manifest.json)
+          if [ -z "$EXPECTED" ] || [ "$EXPECTED" = "null" ]; then
+            echo "::error::manifest has no entries — fixture plan should yield a non-empty char set"
+            exit 1
+          fi
+          echo "expected_name=$EXPECTED" >> "$GITHUB_ENV"
+          python3 scripts/gh_api.py --labels --manifest manifest.json \
+            --github-token "$GH_TOKEN" --pr-number "$PR"
+          NAMES=$(gh api "/repos/$GITHUB_REPOSITORY/issues/$PR/labels" --jq '.[].name')
+          echo "PR labels after apply:"
+          echo "$NAMES"
+          if ! printf '%s\n' "$NAMES" | grep -Fxq -- "$EXPECTED"; then
+            echo "::error::expected label $EXPECTED not attached to PR #$PR"
+            exit 1
+          fi
+          DESC=$(gh api "/repos/$GITHUB_REPOSITORY/labels/$(jq -rn --arg s "$EXPECTED" '$s|@uri')" --jq '.description')
+          if [ "${DESC: -10}" != "[tfreport]" ]; then
+            echo "::error::repo label description does not end with [tfreport] marker: $DESC"
+            exit 1
+          fi
+
+      - name: Phase 2 — empty manifest, verify label removed
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ steps.pr.outputs.pr }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          echo "[]" > empty.json
+          python3 scripts/gh_api.py --labels --manifest empty.json \
+            --github-token "$GH_TOKEN" --pr-number "$PR"
+          NAMES=$(gh api "/repos/$GITHUB_REPOSITORY/issues/$PR/labels" --jq '.[].name' || true)
+          echo "PR labels after empty-manifest reconcile:"
+          echo "$NAMES"
+          if printf '%s\n' "$NAMES" | grep -Fxq -- "$expected_name"; then
+            echo "::error::label $expected_name still attached after empty-manifest reconcile"
+            exit 1
+          fi
+
+      - name: Cleanup (best-effort, always runs)
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ steps.pr.outputs.pr }}
+          LABEL: ${{ steps.pr.outputs.label }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          # Detach from PR (404 OK = already gone).
+          gh api -X DELETE "/repos/$GITHUB_REPOSITORY/issues/$PR/labels/$(jq -rn --arg s "$LABEL" '$s|@uri')" 2>/dev/null || true
+          # Delete from repo settings (404 OK = never created).
+          gh api -X DELETE "/repos/$GITHUB_REPOSITORY/labels/$(jq -rn --arg s "$LABEL" '$s|@uri')" 2>/dev/null || true

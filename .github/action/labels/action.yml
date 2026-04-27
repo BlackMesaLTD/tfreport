@@ -1,0 +1,113 @@
+name: tfreport-labels
+description: Reconcile tfreport-managed PR labels (JIT upsert plus stale-removal) from a plan or one-or-more pre-rendered reports
+author: Black Mesa Ltd
+
+# Stage 4 of the matrix pipeline (alongside or instead of tfreport-send),
+# or stage 2 of the single-plan pipeline.
+#
+# Renders a labels manifest via `tfreport --target labels` and feeds it to
+# `scripts/gh_api.py --labels`, which:
+#   1. JIT-upserts each desired label in the repo (PATCH-then-POST).
+#   2. Attaches each desired label to the PR (idempotent).
+#   3. Drops every marker-stamped PR label not in the manifest.
+#
+# Identity is carried by the description marker `[tfreport]` (stamped by the
+# Go binary). An empty manifest is valid: it removes every prior tfreport
+# label from the PR — no separate "no changes" branch needed.
+#
+# Two input shapes:
+#   - plan-file + label (single-plan mode, mirrors the main action).
+#   - report-files (multi-report mode, newline-delimited paths to JSON
+#     reports previously emitted by `tfreport --target json`).
+
+inputs:
+  version:
+    description: "tfreport version to install"
+    required: false
+    default: "latest"
+  plan-file:
+    description: "Path to pre-rendered terraform plan JSON (single-plan mode). Mutually exclusive with report-files."
+    required: false
+    default: ""
+  label:
+    description: "Subscription/environment label for the plan (used as Report.Label in single-plan mode). Required when plan-file is set; ignored when report-files is set."
+    required: false
+    default: ""
+  report-files:
+    description: "Newline-delimited paths to tfreport JSON reports (multi-report mode). Mutually exclusive with plan-file."
+    required: false
+    default: ""
+  github-token:
+    description: "GitHub token with PR write + repo label write scopes."
+    required: true
+  pr-number:
+    description: "PR number override. Empty = auto-derive from the triggering event ($GITHUB_EVENT_PATH: .pull_request.number or .issue.number)."
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Validate inputs
+      shell: bash
+      env:
+        INPUT_PLAN_FILE: ${{ inputs.plan-file }}
+        INPUT_REPORT_FILES: ${{ inputs.report-files }}
+        INPUT_LABEL: ${{ inputs.label }}
+      run: |
+        set -euo pipefail
+        if [ -z "$INPUT_PLAN_FILE" ] && [ -z "$INPUT_REPORT_FILES" ]; then
+          echo "::error::tfreport-labels: exactly one of 'plan-file' or 'report-files' must be provided"
+          exit 1
+        fi
+        if [ -n "$INPUT_PLAN_FILE" ] && [ -n "$INPUT_REPORT_FILES" ]; then
+          echo "::error::tfreport-labels: 'plan-file' and 'report-files' are mutually exclusive"
+          exit 1
+        fi
+        if [ -n "$INPUT_PLAN_FILE" ] && [ -z "$INPUT_LABEL" ]; then
+          echo "::error::tfreport-labels: 'label' is required with 'plan-file' (without it, no label can be emitted)"
+          exit 1
+        fi
+
+    - name: Install tfreport
+      shell: bash
+      env:
+        TFREPORT_VERSION: ${{ inputs.version }}
+      run: bash "$GITHUB_ACTION_PATH/../../../scripts/install-tfreport.sh"
+
+    - name: Render manifest
+      shell: bash
+      env:
+        INPUT_PLAN_FILE: ${{ inputs.plan-file }}
+        INPUT_REPORT_FILES: ${{ inputs.report-files }}
+        INPUT_LABEL: ${{ inputs.label }}
+      run: |
+        set -euo pipefail
+        MANIFEST=$(mktemp --suffix=.json)
+        ARGS=(--target labels)
+        if [ -n "$INPUT_PLAN_FILE" ]; then
+          ARGS+=(--plan-file "$INPUT_PLAN_FILE" --label "$INPUT_LABEL")
+        else
+          while IFS= read -r path; do
+            [ -z "$path" ] && continue
+            ARGS+=(--report-file "$path")
+          done <<< "$INPUT_REPORT_FILES"
+        fi
+        if ! tfreport "${ARGS[@]}" > "$MANIFEST"; then
+          echo "::error::tfreport-labels: render failed (tfreport ${ARGS[*]})"
+          exit 1
+        fi
+        echo "TFREPORT_LABELS_MANIFEST=$MANIFEST" >> "$GITHUB_ENV"
+
+    - name: Apply manifest
+      shell: bash
+      env:
+        INPUT_GITHUB_TOKEN: ${{ inputs.github-token }}
+        INPUT_PR_NUMBER: ${{ inputs.pr-number }}
+      run: |
+        set -euo pipefail
+        ARGS=(--labels --manifest "$TFREPORT_LABELS_MANIFEST" --github-token "$INPUT_GITHUB_TOKEN")
+        if [ -n "$INPUT_PR_NUMBER" ]; then
+          ARGS+=(--pr-number "$INPUT_PR_NUMBER")
+        fi
+        python3 "$GITHUB_ACTION_PATH/../../../scripts/gh_api.py" "${ARGS[@]}"
