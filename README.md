@@ -222,6 +222,34 @@ Default artifact name is `tfreport-<label>` (override with `artifact-name`).
 
 `artifact-pattern` defaults to `tfreport-*` matching what `prepare` uploads. Empty-state is handled automatically — if zero matching artifacts exist, the preset writes its `empty-message` default (`_No infrastructure changes detected in this PR._`, overridable) and still sends it.
 
+### Per-leg step summary in a matrix workflow
+
+When you want a per-subscription step summary AND a per-subscription report JSON for the downstream PR aggregation, pair `prepare` with `report-plan` inside each matrix leg. This is the migration target for legacy script-driven step summaries (`terraform show -no-color … | tf2diff | tf2mdsummary >> $GITHUB_STEP_SUMMARY` and friends).
+
+```yaml
+- uses: BlackMesaLTD/tfreport/.github/action/prepare@v0
+  with:
+    plan-file: ./subscriptions/${{ matrix.subscription }}/plan.show.json
+    text-plan-file: ./subscriptions/${{ matrix.subscription }}/plan.txt
+    label: ${{ matrix.subscription }}
+    config: .tfreport.yml
+    custom: |
+      sub_id: ${{ matrix.ID }}
+
+- uses: BlackMesaLTD/tfreport/.github/action/report-plan@v0
+  with:
+    plan-file: ./subscriptions/${{ matrix.subscription }}/plan.show.json
+    text-plan-file: ./subscriptions/${{ matrix.subscription }}/plan.txt
+    label: ${{ matrix.subscription }}
+    config: .tfreport.yml
+    target: github-step-summary
+    step-summary: 'true'
+    custom: |
+      sub_id: ${{ matrix.ID }}
+```
+
+Both steps source `scripts/install-tfreport.sh`; from v0.3.1 the script short-circuits when the binary is already on disk so the second invocation re-uses the first install. Override `output.targets.github-step-summary.template` in `.tfreport.yml` for a project-specific layout — per-resource collapsibles, single big diff block, custom emoji legend, etc.
+
 ### `send` — destinations in detail
 
 Three optional destinations; any combination in a single call. Every preset exposes these inputs; so does `send` directly for power users with pre-rendered markdown.
