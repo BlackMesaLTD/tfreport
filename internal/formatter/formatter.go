@@ -21,13 +21,16 @@ type MultiReportFormatter interface {
 
 // Get returns a formatter for the given target name. The four markdown-flavor
 // targets share a single TemplateFormatter; json stays on its own dedicated
-// implementation because it's the canonical interchange format.
+// implementation because it's the canonical interchange format; labels emits
+// a side-effect manifest consumed by scripts/gh_api.py --labels.
 func Get(target string) (Formatter, error) {
 	switch target {
 	case "markdown", "github-pr-body", "github-pr-comment", "github-step-summary":
 		return NewTemplateFormatter(target), nil
 	case "json":
 		return &JSONFormatter{}, nil
+	case "labels":
+		return &LabelsFormatter{}, nil
 	default:
 		return nil, fmt.Errorf("unknown target: %q (valid: %v)", target, ValidTargets())
 	}
@@ -35,5 +38,5 @@ func Get(target string) (Formatter, error) {
 
 // ValidTargets returns the list of valid target names.
 func ValidTargets() []string {
-	return []string{"markdown", "github-pr-body", "github-pr-comment", "github-step-summary", "json"}
+	return []string{"markdown", "github-pr-body", "github-pr-comment", "github-step-summary", "json", "labels"}
 }
