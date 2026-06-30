@@ -138,6 +138,7 @@ runs:
       shell: bash
       env:
         TFREPORT_VERSION: ${{ inputs.version }}
+        GITHUB_TOKEN: ${{ github.token }}
       run: bash "$GITHUB_ACTION_PATH/../../../scripts/install-tfreport.sh"
 
     - name: Run tfreport (JSON export)
