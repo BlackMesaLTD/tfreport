@@ -513,14 +513,7 @@ func renderModuleNodeChangedAttrs(n *core.Node, mode string) string {
 	// union only — matches modules_table's partitioning.
 	var meaningfulAttrs []core.ChangedAttribute
 	var creates, deletes int
-	for _, c := range n.Children {
-		if c.Kind != core.KindResource {
-			continue
-		}
-		rc, ok := c.Payload.(*core.ResourceChange)
-		if !ok || rc == nil {
-			continue
-		}
+	for _, rc := range resourcesUnder(n) {
 		switch rc.Action {
 		case core.ActionUpdate, core.ActionReplace:
 			meaningfulAttrs = append(meaningfulAttrs, rc.ChangedAttributes...)
@@ -549,14 +542,8 @@ func renderModuleNodeChangedAttrs(n *core.Node, mode string) string {
 		}
 	case ChangedAttrsCount:
 		total := 0
-		for _, c := range n.Children {
-			if c.Kind != core.KindResource {
-				continue
-			}
-			rc, _ := c.Payload.(*core.ResourceChange)
-			if rc != nil {
-				total += len(rc.ChangedAttributes)
-			}
+		for _, rc := range resourcesUnder(n) {
+			total += len(rc.ChangedAttributes)
 		}
 		return fmt.Sprintf("%d attrs", total)
 	default:
@@ -565,20 +552,38 @@ func renderModuleNodeChangedAttrs(n *core.Node, mode string) string {
 }
 
 // unionAttrKeysFromNode collects + sorts the backticked union of
-// attribute keys across all Resource children of n. empty result
-// returns "—" as a cell-safe placeholder.
+// attribute keys across every Resource under n (direct children and
+// nested sub-module descendants). Empty result returns "—" as a
+// cell-safe placeholder.
 func unionAttrKeysFromNode(n *core.Node, _ bool) string {
 	var all []core.ChangedAttribute
-	for _, c := range n.Children {
-		if c.Kind != core.KindResource {
-			continue
-		}
-		rc, _ := c.Payload.(*core.ResourceChange)
-		if rc != nil {
-			all = append(all, rc.ChangedAttributes...)
-		}
+	for _, rc := range resourcesUnder(n) {
+		all = append(all, rc.ChangedAttributes...)
 	}
 	return unionAttrKeysFromSlice(all)
+}
+
+// resourcesUnder returns every ResourceChange in n's subtree in tree
+// order. A module instance's resources routinely live one or more
+// sub-module calls down (module.vnet.module.nsg["app"].azurerm_…), and
+// a column that only looked at direct children rendered "—" for exactly
+// those instances.
+func resourcesUnder(n *core.Node) []*core.ResourceChange {
+	var out []*core.ResourceChange
+	var walk func(*core.Node)
+	walk = func(x *core.Node) {
+		for _, c := range x.Children {
+			if c.Kind == core.KindResource {
+				if rc, ok := c.Payload.(*core.ResourceChange); ok && rc != nil {
+					out = append(out, rc)
+				}
+				continue
+			}
+			walk(c)
+		}
+	}
+	walk(n)
+	return out
 }
 
 // unionAttrKeysFromSlice dedups+sorts+backticks attribute keys.

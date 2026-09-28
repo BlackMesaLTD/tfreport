@@ -358,3 +358,36 @@ func TestLoadDefault(t *testing.T) {
 		t.Errorf("max resources = %d, want 50", cfg.Output.MaxResourcesInSummary)
 	}
 }
+
+func TestEffectiveOutput_collapseUnchanged(t *testing.T) {
+	cfg, err := Parse([]byte(`
+output:
+  collapse_unchanged: true
+  targets:
+    github-step-summary:
+      unchanged_context: 0
+    github-pr-comment:
+      collapse_unchanged: false
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Output.CollapseUnchanged || cfg.Output.UnchangedContext != 1 {
+		t.Errorf("global: want collapse=true context=1 (default), got %v/%d", cfg.Output.CollapseUnchanged, cfg.Output.UnchangedContext)
+	}
+	ss := cfg.EffectiveOutput("github-step-summary")
+	if !ss.CollapseUnchanged || ss.UnchangedContext != 0 {
+		t.Errorf("step-summary: want collapse=true context=0, got %v/%d", ss.CollapseUnchanged, ss.UnchangedContext)
+	}
+	pc := cfg.EffectiveOutput("github-pr-comment")
+	if pc.CollapseUnchanged || pc.UnchangedContext != 1 {
+		t.Errorf("pr-comment: want collapse=false context=1, got %v/%d", pc.CollapseUnchanged, pc.UnchangedContext)
+	}
+	if !(TargetConfig{}).IsZero() {
+		t.Error("zero TargetConfig must be IsZero")
+	}
+	f := false
+	if (TargetConfig{CollapseUnchanged: &f}).IsZero() {
+		t.Error("TargetConfig with collapse_unchanged set must not be IsZero")
+	}
+}

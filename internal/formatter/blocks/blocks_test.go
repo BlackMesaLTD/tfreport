@@ -264,3 +264,52 @@ func TestFooter(t *testing.T) {
 		t.Errorf("want credit in footer, got %q", out)
 	}
 }
+
+func TestTextPlan_collapseUnchanged(t *testing.T) {
+	ctx := fixtureCtx(t, "github-step-summary")
+	addr := ctx.Report.ModuleGroups[0].Changes[0].Address
+	ctx.Report.TextPlanBlocks = map[string]string{addr: "  # " + addr + ` will be updated in-place
+  ~ resource "azurerm_thing" "x" {
+        id                  = "/subscriptions/00000000-0000-0000-0000-000000000000/resourceGroups/rg/providers/Microsoft.Network/things/x"
+        name                = "thing-x"
+        location            = "uksouth"
+        resource_group_name = "rg"
+      ~ tags                = { "a" = "1" -> "2" }
+    }`}
+	ctx.Output.CollapseUnchanged = true
+	ctx.Output.UnchangedContext = 1
+	ctx.TextBudget = &TextPlanBudget{Remaining: 1 << 20}
+	before := ctx.TextBudget.Remaining
+
+	out, err := TextPlan{}.Render(ctx, map[string]any{"addresses": addr})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "# ... (2 unchanged lines hidden)") {
+		t.Errorf("want collapse marker from ctx defaults, got:\n%s", out)
+	}
+	chargedCollapsed := before - ctx.TextBudget.Remaining
+
+	// Per-block args override ctx: collapse=false renders verbatim and is
+	// charged more against the budget than the collapsed render.
+	before = ctx.TextBudget.Remaining
+	out, err = TextPlan{}.Render(ctx, map[string]any{"addresses": addr, "collapse": false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "unchanged lines hidden") {
+		t.Errorf("collapse=false must render verbatim, got:\n%s", out)
+	}
+	chargedVerbatim := before - ctx.TextBudget.Remaining
+	if chargedCollapsed <= 0 || chargedCollapsed >= chargedVerbatim {
+		t.Errorf("budget must be charged the collapsed size (collapsed %d, verbatim %d)", chargedCollapsed, chargedVerbatim)
+	}
+	// context=0 keeps only changed lines + marker.
+	out, err = TextPlan{}.Render(ctx, map[string]any{"addresses": addr, "context": 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "# ... (4 unchanged lines hidden)") {
+		t.Errorf("context=0 should hide all 4 context lines, got:\n%s", out)
+	}
+}

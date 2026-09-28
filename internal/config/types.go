@@ -32,13 +32,20 @@ type AttributeConfig struct {
 
 // OutputConfig controls output behavior.
 type OutputConfig struct {
-	MaxResourcesInSummary int                     `yaml:"max_resources_in_summary"`
-	GroupSubmodules       bool                    `yaml:"group_submodules"`
-	SubmoduleDepth        int                     `yaml:"submodule_depth"`
-	StepSummaryMaxKB      int                     `yaml:"step_summary_max_kb"`
-	CodeFormat            string                  `yaml:"code_format"`
-	ChangedAttrsDisplay   string                  `yaml:"changed_attrs_display"`
-	PreserveAttributes    []string                `yaml:"preserve_attributes"`
+	MaxResourcesInSummary int    `yaml:"max_resources_in_summary"`
+	GroupSubmodules       bool   `yaml:"group_submodules"`
+	SubmoduleDepth        int    `yaml:"submodule_depth"`
+	StepSummaryMaxKB      int    `yaml:"step_summary_max_kb"`
+	CodeFormat            string `yaml:"code_format"`
+	ChangedAttrsDisplay   string `yaml:"changed_attrs_display"`
+	// CollapseUnchanged folds long runs of unchanged context lines inside
+	// text_plan blocks into a single "# ... (N unchanged lines hidden)"
+	// marker, keeping UnchangedContext lines either side of every change.
+	// Default false (verbatim terraform output). UnchangedContext defaults
+	// to 1; 0 hides every context line except the resource marker.
+	CollapseUnchanged  bool     `yaml:"collapse_unchanged"`
+	UnchangedContext   int      `yaml:"unchanged_context"`
+	PreserveAttributes []string `yaml:"preserve_attributes"`
 	// PreserveStrict controls how tfreport reacts when the body supplied via
 	// --previous-body-file contains malformed preserve markers. Default false:
 	// emit a ::warning:: to stderr, skip reconciliation, and render as if no
@@ -68,6 +75,8 @@ type TargetConfig struct {
 	StepSummaryMaxKB      *int   `yaml:"step_summary_max_kb,omitempty"`
 	CodeFormat            string `yaml:"code_format,omitempty"`
 	ChangedAttrsDisplay   string `yaml:"changed_attrs_display,omitempty"`
+	CollapseUnchanged     *bool  `yaml:"collapse_unchanged,omitempty"`
+	UnchangedContext      *int   `yaml:"unchanged_context,omitempty"`
 }
 
 // SectionsConfig enables the simple "toggle sections on/off" mode against
@@ -88,7 +97,9 @@ func (t TargetConfig) IsZero() bool {
 		t.SubmoduleDepth == nil &&
 		t.StepSummaryMaxKB == nil &&
 		t.CodeFormat == "" &&
-		t.ChangedAttrsDisplay == ""
+		t.ChangedAttrsDisplay == "" &&
+		t.CollapseUnchanged == nil &&
+		t.UnchangedContext == nil
 }
 
 // IsZero reports whether no section filtering was configured.
@@ -108,6 +119,7 @@ func Default() Config {
 		Output: OutputConfig{
 			MaxResourcesInSummary: 50,
 			CodeFormat:            "diff",
+			UnchangedContext:      1,
 		},
 	}
 }
@@ -139,6 +151,12 @@ func (c Config) EffectiveOutput(target string) OutputConfig {
 	}
 	if tc.ChangedAttrsDisplay != "" {
 		out.ChangedAttrsDisplay = tc.ChangedAttrsDisplay
+	}
+	if tc.CollapseUnchanged != nil {
+		out.CollapseUnchanged = *tc.CollapseUnchanged
+	}
+	if tc.UnchangedContext != nil {
+		out.UnchangedContext = *tc.UnchangedContext
 	}
 	return out
 }

@@ -136,6 +136,8 @@ output:
   step_summary_max_kb: 800        # text plan budget for step-summary (GitHub limit ~1024KB)
   code_format: diff               # code block fence: diff | hcl | plain
   changed_attrs_display: dash     # create/delete Changed column: dash | wordy | count | list
+  collapse_unchanged: false       # fold runs of unchanged lines in text_plan blocks
+  unchanged_context: 1            # context lines kept either side of a change when collapsing
 
   targets:
     github-pr-comment:
@@ -164,6 +166,8 @@ key under `output.targets.<name>.<knob>`. Supported overrides:
 - `submodule_depth`
 - `step_summary_max_kb`
 - `changed_attrs_display`
+- `collapse_unchanged`
+- `unchanged_context`
 - `preserve_attributes`
 
 Resolution order (highest wins):
@@ -194,6 +198,36 @@ output:
 CLI `--preserve key` overrides the config list when both are specified.
 
 See also: `docs/output-templates.md` — the `.Preserved` section of the raw-data escape hatch for template patterns.
+
+### `collapse_unchanged` / `unchanged_context`
+
+Terraform's text plan echoes every unchanged sibling attribute around a
+change (all nine tags when one tag is removed, every closing brace, its own
+`# (N unchanged attributes hidden)` notes). On tag-sweep and NSG-heavy
+plans those context lines are 55-60% of the bytes in a step summary.
+
+`collapse_unchanged: true` folds each run of unchanged lines inside a
+`text_plan` block into one marker, keeping `unchanged_context` lines either
+side of every changed line (unified-diff style):
+
+```diff
+   # module.nsg["app"].azurerm_network_security_group.main will be updated in-place
+!  resource "azurerm_network_security_group" "main" {
+         # ... (2 unchanged lines hidden)
+!      tags = {
+-          "BusinessUnit" = "DTS" -> null
+           "Cost Code ID" = "IS9210S110"
+           # ... (8 unchanged lines hidden)
+```
+
+Rules: the resource marker line is always kept; `-/+` replace headers and
+`<=` data reads count as changes; a run is only folded when it saves at
+least one line; the marker inherits the indentation of the first hidden
+line. Collapsing runs before the byte budget is charged, so it stretches
+`step_summary_max_kb` rather than only shrinking output. Per-block args
+`collapse` and `context` on `text_plan` override the config for one call.
+Measured on a 1,120-resource tag-sweep plan: `unchanged_context: 1` cut the
+text-plan bytes by 30%, `0` by 50%.
 
 ### `changed_attrs_display`
 
@@ -233,6 +267,42 @@ For **update** actions with changed attributes, impact is resolved in this order
 **Rule:** If ALL changed attributes resolve to an impact (steps 1-3), the **highest** impact is used. If ANY attribute lacks an override, the entire resolution falls back to step 4.
 
 This prevents a `tags: none` override from masking a dangerous `address_prefixes` change that has no override.
+
+### Block-set attributes (NSG rules, routes)
+
+For `azurerm_network_security_group.security_rule` and
+`azurerm_route_table.route`, tfreport reports changes per element instead
+of one opaque `security_rule` key:
+
+| Key | Meaning |
+|---|---|
+| `security_rule[<name>].added` / `.removed` | rule present only after / only before |
+| `security_rule[<name>].<field>` | that field differs after normalisation (Description shows `old → new`) |
+| `security_rule[<name>].format` | same members; only string-vs-list shape or letter case differs |
+| `security_rule.order` | identical set, elements reordered |
+
+Normalisation merges `source_address_prefix` with `source_address_prefixes`
+(and the destination / port pairs), compares `protocol`, `access`,
+`direction`, `next_hop_type` case-insensitively, and treats empty strings,
+empty lists and nulls as equal. `azurerm_network_security_rule` and
+`azurerm_route` (object-style modules, one resource per rule) get the same
+equivalence on their own attributes, and on update their keys are prefixed
+with the rule name (`security_rule[allow-443].priority`) so both module
+styles share one grammar. Impact overrides on the resource's own attribute
+(`priority`) still apply to the prefixed key.
+
+Impact lookup tries the full key, then the base attribute, so
+`resources.azurerm_network_security_group.attributes.security_rule.impact: high`
+covers every `security_rule[...]` key. `.format` / `.order` keys default to
+`none`; override them explicitly if you want cosmetic rewrites to count:
+
+```yaml
+resources:
+  azurerm_network_security_group:
+    attributes:
+      security_rule: { impact: high, note: "Traffic policy" }
+      security_rule.order: { impact: low }
+```
 
 ## Default Config
 

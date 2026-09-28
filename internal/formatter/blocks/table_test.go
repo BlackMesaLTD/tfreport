@@ -473,3 +473,31 @@ func TestTable_ChainedPathSelector(t *testing.T) {
 		t.Errorf("nic should be included:\n%s", out)
 	}
 }
+
+// Resources under nested sub-module calls must feed the module_instance
+// changed_attrs column — the consumer layout (module.<sub>.module.nsg["x"])
+// rendered "—" for every NSG change before resourcesUnder.
+func TestTable_ModuleInstanceChangedAttrsIncludesNestedSubmodules(t *testing.T) {
+	r := &core.Report{Label: "r", ModuleGroups: []core.ModuleGroup{{
+		Name: "nsg", Path: `module.shared.module.nsg["app"]`,
+		Changes: []core.ResourceChange{{
+			Address: `module.shared.module.nsg["app"].azurerm_network_security_group.main`,
+			ResourceType: "azurerm_network_security_group", Action: core.ActionUpdate,
+			ChangedAttributes: []core.ChangedAttribute{{Key: "security_rule[allow-443].priority"}},
+		}},
+	}}}
+	ctx := &BlockContext{Target: "github-pr-body", Report: r, Tree: core.BuildTree(r), Output: OutputOptions{CodeFormat: "diff"}}
+	for _, mode := range []string{"dash", "list", "count"} {
+		ctx.Output.ChangedAttrsDisplay = mode
+		out, err := (Table{}).Render(ctx, map[string]any{"source": "module_instance", "columns": "module,changed_attrs"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(out, "| —") {
+			t.Errorf("mode=%s: nested resource attrs missing:\n%s", mode, out)
+		}
+		if mode != "count" && !strings.Contains(out, "`security_rule[allow-443].priority`") {
+			t.Errorf("mode=%s: want expanded key in cell:\n%s", mode, out)
+		}
+	}
+}

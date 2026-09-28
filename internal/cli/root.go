@@ -382,6 +382,8 @@ func outputOptions(out config.OutputConfig) blocks.OutputOptions {
 		StepSummaryMaxKB:      out.StepSummaryMaxKB,
 		CodeFormat:            out.CodeFormat,
 		ChangedAttrsDisplay:   out.ChangedAttrsDisplay,
+		CollapseUnchanged:     out.CollapseUnchanged,
+		UnchangedContext:      out.UnchangedContext,
 	}
 }
 
@@ -516,6 +518,24 @@ func chainResolvers(cfg config.Config, forceNewResolver func(string, string) (bo
 	return func(resourceType, attrName string) (core.Impact, bool) {
 		if impact, ok := cfg.AttributeImpact(resourceType, attrName); ok {
 			return impact, true
+		}
+		// Expanded block-set keys ("security_rule[x].priority") inherit any
+		// override on their base attribute; cosmetic keys (".format",
+		// ".order") are functionally no-ops and resolve to none.
+		if base := core.BaseAttributeKey(attrName); base != attrName {
+			if impact, ok := cfg.AttributeImpact(resourceType, base); ok {
+				return impact, true
+			}
+		}
+		// Object-style rule resources: "security_rule[x].priority" on an
+		// azurerm_network_security_rule still honours an override on "priority".
+		if field := core.FieldOfAttributeKey(attrName); field != "" {
+			if impact, ok := cfg.AttributeImpact(resourceType, field); ok {
+				return impact, true
+			}
+		}
+		if core.IsCosmeticKey(attrName) {
+			return core.ImpactNone, true
 		}
 		if forceNewResolver != nil {
 			if forceNew, found := forceNewResolver(resourceType, attrName); found && forceNew {

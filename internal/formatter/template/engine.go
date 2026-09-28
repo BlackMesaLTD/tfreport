@@ -51,6 +51,7 @@ func (e *Engine) WithIncludeFunc(fn func(string) (string, error)) *Engine {
 type SingleReportData struct {
 	Target          string
 	Report          *core.Report
+	Reports         []*core.Report // one-element view of Report; keeps multi-report templates working for a single input
 	Title           string
 	PlanCounts      string
 	KeyChanges      string
@@ -453,9 +454,17 @@ func (e *Engine) buildData(ctx *blocks.BlockContext) (any, error) {
 			CrossSubTable:   crossSubTable,
 		}, nil
 	}
+	// Reports mirrors the multi-report scope as a one-element slice so a
+	// template written for aggregation ({{ range .Reports }}) renders the
+	// same way when a matrix produced exactly one report.
+	var reports []*core.Report
+	if ctx.Report != nil {
+		reports = []*core.Report{ctx.Report}
+	}
 	return &SingleReportData{
 		Target:          ctx.Target,
 		Report:          ctx.Report,
+		Reports:         reports,
 		Title:           title,
 		PlanCounts:      planCounts,
 		KeyChanges:      keyChanges,

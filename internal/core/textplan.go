@@ -2,6 +2,7 @@ package core
 
 import (
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -133,4 +134,98 @@ func belongsToGroup(addr, groupPath string) bool {
 	// The address should start with the group path followed by a dot.
 	// e.g., path "module.vnet" matches "module.vnet.azurerm_virtual_network.main"
 	return strings.HasPrefix(addr, groupPath+".")
+}
+
+// changeLineRe matches terraform change-marker lines that TextToDiff cannot
+// classify through diffSymbolRe alone: the replace header (`-/+ resource`)
+// and data-source reads (`<= data`). Both must count as "changed" for
+// CollapseUnchanged so they are never folded into a hidden run.
+var changeLineRe = regexp.MustCompile(`^\s*(?:-/\+|<=)\s`)
+
+// hiddenRunRe matches a marker line previously emitted by CollapseUnchanged.
+// Re-collapsing already-collapsed text must not nest markers.
+var hiddenRunRe = regexp.MustCompile(`^\s*# \.\.\. \(\d+ unchanged lines hidden\)$`)
+
+// IsChangeLine reports whether a terraform text-plan line carries a change
+// symbol (+, -, ~, -/+ or <=) in its key position — the same test TextToDiff
+// uses to decide which lines get a column-0 diff symbol. Lines that fail the
+// test are unchanged context: attribute echoes, closing braces, terraform's
+// own "# (N unchanged attributes hidden)" notes, and blank lines.
+func IsChangeLine(line string) bool {
+	if changeLineRe.MatchString(line) {
+		return true
+	}
+	prefix := line
+	if eqPos := strings.Index(line, "="); eqPos >= 0 {
+		prefix = line[:eqPos]
+	}
+	return diffSymbolRe.MatchString(prefix)
+}
+
+// CollapseUnchanged rewrites a terraform text-plan block so that long runs of
+// unchanged context lines are replaced by a single
+//
+//	# ... (N unchanged lines hidden)
+//
+// marker, keeping `keep` context lines on either side of every changed line
+// (the same idea as unified-diff context). Resource marker lines
+// ("# <address> will be updated in-place") are always kept so a block never
+// loses its identity. A run is only collapsed when doing so hides at least
+// two lines AND the marker is shorter than the bytes it replaces, so the
+// result is never larger than the input. keep < 0 disables collapsing and
+// returns text as-is.
+//
+// The function operates on raw terraform text (before TextToDiff) so the
+// marker inherits the indentation of the first hidden line and renders as a
+// neutral context line under every code_format.
+func CollapseUnchanged(text string, keep int) string {
+	if keep < 0 || text == "" {
+		return text
+	}
+	lines := strings.Split(text, "\n")
+	out := make([]string, 0, len(lines))
+	run := make([]string, 0, 16)
+
+	flush := func() {
+		hidden := len(run) - 2*keep
+		if hidden >= 2 {
+			marker := hiddenMarker(run[keep], hidden)
+			// Only fold when the marker is genuinely smaller than what it
+			// replaces — a run of short lines can be cheaper left alone.
+			saved := 0
+			for _, l := range run[keep : keep+hidden] {
+				saved += len(l) + 1
+			}
+			if saved > len(marker)+1 {
+				out = append(out, run[:keep]...)
+				out = append(out, marker)
+				out = append(out, run[len(run)-keep:]...)
+				run = run[:0]
+				return
+			}
+		}
+		out = append(out, run...)
+		run = run[:0]
+	}
+
+	for _, line := range lines {
+		if IsChangeLine(line) || markerRe.MatchString(line) || hiddenRunRe.MatchString(line) {
+			flush()
+			out = append(out, line)
+			continue
+		}
+		run = append(run, line)
+	}
+	flush()
+	return strings.Join(out, "\n")
+}
+
+// hiddenMarker builds the collapse marker line, indented like the first
+// line it replaces so it sits at the same nesting level in the block.
+func hiddenMarker(firstHidden string, hidden int) string {
+	indent := firstHidden[:len(firstHidden)-len(strings.TrimLeft(firstHidden, " \t"))]
+	if strings.TrimSpace(firstHidden) == "" {
+		indent = "        "
+	}
+	return indent + "# ... (" + strconv.Itoa(hidden) + " unchanged lines hidden)"
 }

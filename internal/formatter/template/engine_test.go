@@ -453,3 +453,24 @@ func TestEngine_includeBound(t *testing.T) {
 		t.Errorf("include failed: %q", out)
 	}
 }
+
+// A template written for the multi-report scope ({{ range .Reports }}) must
+// also render when a matrix produced exactly one report — the CLI takes the
+// single-report path for one --report-file, and consumers' pr-body
+// templates are written once for both cases.
+func TestEngine_singleReportExposesReports(t *testing.T) {
+	r := loadReport(t)
+	r.Label = "only-sub"
+	engine := New(blocks.Default())
+	out, err := engine.Render(`{{ len .Reports }}:{{ range .Reports }}{{ .Label }}{{ end }}`, &blocks.BlockContext{
+		Target: "github-pr-body",
+		Report: r,
+		Output: blocks.OutputOptions{CodeFormat: "diff"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "1:only-sub" {
+		t.Errorf("got %q", out)
+	}
+}

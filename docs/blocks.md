@@ -443,7 +443,7 @@ Generic tree-query-backed markdown table. Select nodes via a path, optionally fi
 
 ### `text_plan`
 
-Native terraform plan text block, budget-aware. Truncates at newline boundaries when ctx.TextBudget would be exceeded.
+Native terraform plan text block, budget-aware. Truncates at newline boundaries when ctx.TextBudget would be exceeded. Optionally collapses runs of unchanged context lines.
 
 **Args:**
 
@@ -451,6 +451,8 @@ Native terraform plan text block, budget-aware. Truncates at newline boundaries 
 |------|------|---------|-------------|
 | `addresses` | `csv` | (all resources in report) | Restrict to these resource addresses; empty renders every address with a text block. |
 | `fence` | `string` | (from ctx.Output.CodeFormat) | Override code fence language: `diff`, `hcl`, `terraform`, or any other for plain. |
+| `collapse` | `bool` | (from output.collapse_unchanged) | Fold runs of unchanged context lines into a `# ... (N unchanged lines hidden)` marker. Resource marker lines are always kept. Collapsing happens before the budget is charged, so it stretches `step_summary_max_kb`. |
+| `context` | `int` | (from output.unchanged_context, 1) | Unchanged lines kept either side of every changed line when `collapse` is on. `0` keeps only the changed lines and the resource marker. |
 
 
 ### `title`
