@@ -567,7 +567,7 @@ func unionAttrKeysFromNode(n *core.Node, _ bool) string {
 // verdicts are counted rather than listed, so 160 rules rewritten as lists
 // read as one entry:
 //
-//	`tags`; `nsg["evwprod-mgmt"]`: `security_rule[coreplf-mailbox-out].removed`, `security_rule[…×160].string_to_list`
+//	`tags`; `nsg["app"]`: `security_rule[smtp-out].removed`, `security_rule[…×160].string_to_list`
 //
 // actions, when given, restrict which resources contribute (the dash /
 // wordy modes pass update+replace; list mode passes nothing = all).

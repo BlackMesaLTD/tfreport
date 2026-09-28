@@ -20,8 +20,8 @@ import (
 //	      # (13 unchanged attributes hidden)
 //	  }
 //
-//	# security_rule "coreplf-mailbox-out" — removed
-//	- security_rule "coreplf-mailbox-out" {
+//	# security_rule "smtp-out" — removed
+//	- security_rule "smtp-out" {
 //	    - access   = "Allow"
 //	    …
 //	  }
