@@ -11,7 +11,7 @@ author: Black Mesa Ltd
 
 inputs:
   version:
-    description: "tfreport version to install"
+    description: "tfreport version to install: a release tag, \"latest\", or \"source\" to build from this action's checkout (for testing unreleased branches; needs Go on the runner)"
     required: false
     default: "latest"
   plan:

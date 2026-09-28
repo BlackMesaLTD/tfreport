@@ -4,7 +4,14 @@
 # carry its own copy of the install logic.
 #
 # Inputs (env vars):
-#   TFREPORT_VERSION       — version tag (e.g. "v0.0.5") or "latest" (default).
+#   TFREPORT_VERSION       — version tag (e.g. "v0.0.5"), "latest" (default), or
+#                            "source": build ./cmd/tfreport from the repository
+#                            checkout the composite action is running from
+#                            ($GITHUB_ACTION_PATH resolves to it) with the Go
+#                            toolchain on the runner. Lets a consumer test an
+#                            unreleased branch by pointing `uses:` at the branch
+#                            and setting `version: source`. Never resolves a
+#                            release, so it is safe on a fork.
 #   TFREPORT_SKIP_INSTALL  — when "1" AND `tfreport` already resolves on PATH,
 #                            skip the download entirely and use the pre-
 #                            installed binary. ci.yml action-smoke jobs use
@@ -47,6 +54,31 @@ fi
 
 VERSION="${TFREPORT_VERSION:-latest}"
 log "requested version: ${VERSION}"
+
+# Source build: compile from the checkout this script lives in. Composite
+# actions check out the whole repository at the referenced ref, so the module
+# root is two directories above scripts/. A stamp file keyed on the commit
+# makes repeated calls within one job (prepare + render + send) a no-op.
+if [ "$VERSION" = "source" ]; then
+  SRC_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+  if ! command -v go >/dev/null 2>&1; then
+    echo "::error::install-tfreport: TFREPORT_VERSION=source needs a Go toolchain on PATH (add actions/setup-go before this step)." >&2
+    exit 1
+  fi
+  SRC_REV="$(git -C "$SRC_ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+  STAMP="/usr/local/bin/.tfreport-source-${SRC_REV}"
+  if [ -x /usr/local/bin/tfreport ] && [ -f "$STAMP" ]; then
+    log "source build ${SRC_REV} already at /usr/local/bin/tfreport; skipping"
+    exit 0
+  fi
+  log "building from source at ${SRC_ROOT} (${SRC_REV}) with $(go version)"
+  (cd "$SRC_ROOT" && CGO_ENABLED=0 go build -ldflags "-s -w -X github.com/BlackMesaLTD/tfreport/internal/cli.version=source-${SRC_REV}" -o /usr/local/bin/tfreport ./cmd/tfreport)
+  chmod +x /usr/local/bin/tfreport
+  rm -f /usr/local/bin/.tfreport-source-* 2>/dev/null || true
+  : > "$STAMP"
+  log "installed tfreport source-${SRC_REV} to /usr/local/bin/tfreport"
+  exit 0
+fi
 
 # Normalise non-latest requests so "v0.3.0" and "0.3.0" compare equal.
 if [ "$VERSION" != "latest" ]; then
