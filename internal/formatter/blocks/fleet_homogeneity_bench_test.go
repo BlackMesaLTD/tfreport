@@ -78,7 +78,7 @@ func BenchmarkFleetHomogeneity_actionCounts(b *testing.B) {
 }
 
 // TestFleetHomogeneity_scalesToHazard is a non-benchmark scale test that
-// confirms the Render call doesn't panic or explode at networks-azure scale.
+// confirms the Render call doesn't panic or explode at fleet scale (dozens of reports).
 // Uses a hard cap of 10ms via testing.Short to keep CI fast.
 func TestFleetHomogeneity_scalesToHazard(t *testing.T) {
 	if testing.Short() {

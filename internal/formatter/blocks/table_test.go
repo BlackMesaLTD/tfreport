@@ -266,7 +266,7 @@ func TestTable_ModuleInstanceDefaults(t *testing.T) {
 }
 
 // TestTable_ModuleInstanceMatchesLegacyColumnsArg reproduces the exact
-// column set used in networks-azure's .tfreport.yml migration target —
+// column set a pr-body template typically wants —
 // module_type, module, changed_attrs. The point is to prove the user's
 // migration path works byte-shape-equivalent to modules_table.
 func TestTable_ModuleInstanceMatchesLegacyColumnsArg(t *testing.T) {
@@ -475,7 +475,7 @@ func TestTable_ChainedPathSelector(t *testing.T) {
 }
 
 // Resources under nested sub-module calls must feed the module_instance
-// changed_attrs column — the consumer layout (module.<sub>.module.nsg["x"])
+// changed_attrs column — a nested-module layout (module.<sub>.module.nsg["x"])
 // rendered "—" for every NSG change before resourcesUnder.
 func TestTable_ModuleInstanceChangedAttrsIncludesNestedSubmodules(t *testing.T) {
 	r := &core.Report{Label: "r", ModuleGroups: []core.ModuleGroup{{

@@ -15,7 +15,7 @@ import (
 // resources with the same action + same attribute keys + same before/after
 // values produce the same fingerprint and are shown as a single "(×N)" row.
 // This is the blocks-layer equivalent of the `dedup.py` post-processor used
-// by networks-azure.
+// by multi-subscription fleets.
 //
 // Args:
 //

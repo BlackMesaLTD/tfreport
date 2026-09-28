@@ -67,6 +67,7 @@ type ResourceChange struct {
 	Action            Action
 	Impact            Impact
 	IsImport          bool   // true when terraform plan's `importing` field is set on this change
+	ReplacePaths      []string // attributes terraform names as forcing a replacement (plan JSON replace_paths, dotted)
 	DisplayLabel      string // pre-computed from Before/After "name" attr; survives JSON round-trip
 	ChangedAttributes []ChangedAttribute
 	Before            map[string]any

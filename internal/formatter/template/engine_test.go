@@ -456,7 +456,7 @@ func TestEngine_includeBound(t *testing.T) {
 
 // A template written for the multi-report scope ({{ range .Reports }}) must
 // also render when a matrix produced exactly one report — the CLI takes the
-// single-report path for one --report-file, and consumers' pr-body
+// single-report path for one --report-file, and user pr-body
 // templates are written once for both cases.
 func TestEngine_singleReportExposesReports(t *testing.T) {
 	r := loadReport(t)

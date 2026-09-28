@@ -303,9 +303,9 @@ const collapseSample = `  # module.nsg["app"].azurerm_network_security_group.mai
         name                = "nsg-app"
       ~ tags                = {
           - "BusinessUnit"     = "DTS" -> null
-            "Cost Code ID"     = "IS9210S110"
-            "CostCode"         = "IS9210S110"
-            "DeployedBy"       = "Centrica TN"
+            "cost_centre"      = "cc-0001"
+            "team"             = "platform"
+            "deployed_by"      = "pipeline"
             "Environment"      = "Production"
             "ServiceOwner"     = "Someone"
         }
@@ -320,7 +320,7 @@ func TestCollapseUnchanged_keepOne(t *testing.T) {
         name                = "nsg-app"
       ~ tags                = {
           - "BusinessUnit"     = "DTS" -> null
-            "Cost Code ID"     = "IS9210S110"
+            "cost_centre"      = "cc-0001"
             # ... (6 unchanged lines hidden)
     }`
 	if got != want {

@@ -32,6 +32,7 @@ func ParsePlan(data []byte) ([]ResourceChange, error) {
 			Action:          action,
 			Impact:          defaultImpact(action),
 			IsImport:        rc.Change.Importing != nil,
+			ReplacePaths:    replacePaths(rc.Change.ReplacePaths),
 			Before:          toStringAnyMap(rc.Change.Before),
 			After:           toStringAnyMap(rc.Change.After),
 			AfterUnknown:    toStringAnyMap(rc.Change.AfterUnknown),
@@ -189,4 +190,27 @@ func toStringAnyMap(v any) map[string]any {
 		return m
 	}
 	return nil
+}
+
+// replacePaths flattens terraform-json's replace_paths (a list of attribute
+// paths, each a list of string / index steps) into dotted strings such as
+// "name" or "subnet.0.id". These are the attributes terraform says force
+// the replacement — first-hand data, where a text plan only offers the
+// "# forces replacement" comment.
+func replacePaths(raw []interface{}) []string {
+	var out []string
+	for _, p := range raw {
+		steps, ok := p.([]interface{})
+		if !ok {
+			continue
+		}
+		parts := make([]string, 0, len(steps))
+		for _, st := range steps {
+			parts = append(parts, fmt.Sprint(st))
+		}
+		if len(parts) > 0 {
+			out = append(out, strings.Join(parts, "."))
+		}
+	}
+	return out
 }

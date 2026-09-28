@@ -69,11 +69,11 @@ Five formatters are implemented, all targeting GitHub. GitLab MR comments and At
 **What's needed:**
 - Total-output budget tracked by the template formatter.
 - Degradation ladder (collapse → context 0 → drop later text_plan sections → synthetic diffs → header + link).
-- `truncated=` output for the composite actions instead of the consumer grepping for a marker.
+- `truncated=` output for the composite actions instead of callers grepping for a marker.
 
 ## Overflow artifact
 
-**Status:** consumers hand-roll a two-pass render to attach a download link when truncated.
+**Status:** callers hand-roll a two-pass render to attach a download link when truncated.
 
 **What's needed:**
 - `--overflow-file PATH`: second in-process render with an unlimited budget (same template), plus `truncated=true` in `$GITHUB_OUTPUT` and a `::notice::` when the budgeted render was cut.
