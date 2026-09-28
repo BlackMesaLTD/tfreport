@@ -108,6 +108,14 @@ type OutputOptions struct {
 	// "count" (N attrs), "list" (legacy full keys-list). Empty string is
 	// treated as "dash". Blocks validate and per-block args can override.
 	ChangedAttrsDisplay string
+
+	// CollapseUnchanged / UnchangedContext mirror output.collapse_unchanged
+	// and output.unchanged_context: when CollapseUnchanged is true, text_plan
+	// folds runs of unchanged context lines into a "# ... (N unchanged lines
+	// hidden)" marker, keeping UnchangedContext lines around every change.
+	// Per-block `collapse` / `context` args override both.
+	CollapseUnchanged bool
+	UnchangedContext  int
 }
 
 // TextPlanBudget is a mutable byte-budget shared across all text_plan block

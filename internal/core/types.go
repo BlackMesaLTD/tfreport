@@ -121,6 +121,11 @@ type Report struct {
 	MaxImpact      Impact
 	ModuleSources  map[string]string // top-level module call name → source URL
 	TextPlanBlocks map[string]string // resource address → native terraform text block
+	// RuleDiffs holds a per-resource, per-element terraform-style diff for
+	// resources with a registered block set (NSG security_rule, route-table
+	// route): built by BuildRuleDiff at report time, survives the JSON
+	// round-trip, rendered by the rule_delta block.
+	RuleDiffs map[string]string
 	DisplayNames   map[string]string // resource type → human-readable display name
 
 	// Custom is a pass-through bag for user-supplied metadata that

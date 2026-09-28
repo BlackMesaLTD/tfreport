@@ -338,6 +338,18 @@ Impact-level distribution across all resources in scope. Three visual styles (ba
 | `impact` | Impact | Impact label (emoji + name). |
 
 
+### `rule_delta`
+
+Per-rule terraform-style diff for block-set resources (NSG security_rule, route-table route): elements paired by name, only differing fields shown, verdict comment per rule. Empty for resources without a rule diff.
+
+**Args:**
+
+| Name | Type | Default | Description |
+|------|------|---------|-------------|
+| `addresses` | `csv` | (all resources with a rule diff) | Restrict to these resource addresses. |
+| `fence` | `string` | (from ctx.Output.CodeFormat) | Override code fence language: `diff`, `hcl`, `terraform`, or any other for plain. |
+
+
 ### `submodule_group`
 
 Nested <details> collapsibles per sub-module of a given top-level module instance. Extracted from instance_detail's internal grouping.
@@ -443,7 +455,7 @@ Generic tree-query-backed markdown table. Select nodes via a path, optionally fi
 
 ### `text_plan`
 
-Native terraform plan text block, budget-aware. Truncates at newline boundaries when ctx.TextBudget would be exceeded.
+Native terraform plan text block, budget-aware. Truncates at newline boundaries when ctx.TextBudget would be exceeded. Optionally collapses runs of unchanged context lines.
 
 **Args:**
 
@@ -451,6 +463,8 @@ Native terraform plan text block, budget-aware. Truncates at newline boundaries 
 |------|------|---------|-------------|
 | `addresses` | `csv` | (all resources in report) | Restrict to these resource addresses; empty renders every address with a text block. |
 | `fence` | `string` | (from ctx.Output.CodeFormat) | Override code fence language: `diff`, `hcl`, `terraform`, or any other for plain. |
+| `collapse` | `bool` | (from output.collapse_unchanged) | Fold runs of unchanged context lines into a `# ... (N unchanged lines hidden)` marker. Resource marker lines are always kept. Collapsing happens before the budget is charged, so it stretches `step_summary_max_kb`. |
+| `context` | `int` | (from output.unchanged_context, 1) | Unchanged lines kept either side of every changed line when `collapse` is on. `0` keeps only the changed lines and the resource marker. |
 
 
 ### `title`

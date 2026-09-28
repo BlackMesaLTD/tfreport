@@ -1,0 +1,45 @@
+name: Feature request
+description: Propose new functionality or an enhancement to existing behaviour
+title: "[feature] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do that tfreport doesn't currently support, or supports awkwardly?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: >-
+        If you have a concrete design in mind, describe it (new flag, block,
+        config knob, action input, etc.). Otherwise describe the outcome you
+        want and let the maintainers figure out the shape.
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Workarounds, other tools, or design options you've weighed.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Roughly where in the codebase this touches. Pick the best fit.
+      options:
+        - CLI / flags
+        - Core pipeline (parser / differ / classifier / summarizer)
+        - Output target (new formatter)
+        - Template / block catalogue
+        - Presets / presetgen
+        - Composite GitHub Action
+        - Config schema
+        - Docs
+        - Other / not sure
+    validations:
+      required: true

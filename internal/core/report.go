@@ -32,6 +32,18 @@ func GenerateReport(planJSON []byte, opts ReportOptions) (*Report, error) {
 		}
 	}
 
+	// Step 3b': Expand registered block sets (NSG security_rule, route table
+	// route) into per-element keys so "security_rule" never hides whether a
+	// rule was added, removed, re-prioritised or merely rewritten in list
+	// form. Runs after descriptions so preset lookups saw the base key.
+	ruleDiffs := map[string]string{}
+	for i := range changes {
+		ExpandResourceChanges(&changes[i])
+		if d := BuildRuleDiff(&changes[i]); d != "" {
+			ruleDiffs[changes[i].Address] = d
+		}
+	}
+
 	// Step 3c: Preserve allowlisted attribute values (Layer 2 — gated by
 	// sensitivity; see preserve.go).
 	if len(opts.PreserveAttributes) > 0 {
@@ -91,6 +103,7 @@ func GenerateReport(planJSON []byte, opts ReportOptions) (*Report, error) {
 		MaxImpact:      MaxImpactOverall(groups),
 		ModuleSources:  moduleSources,
 		DisplayNames:   opts.DisplayNames,
+		RuleDiffs:      ruleDiffs,
 	}, nil
 }
 

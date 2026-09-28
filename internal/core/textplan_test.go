@@ -296,3 +296,118 @@ func TestParseTextPlanDataSource(t *testing.T) {
 		t.Error("missing block for vnet resource")
 	}
 }
+
+const collapseSample = `  # module.nsg["app"].azurerm_network_security_group.main will be updated in-place
+  ~ resource "azurerm_network_security_group" "main" {
+        id                  = "/subscriptions/x/nsg"
+        name                = "nsg-app"
+      ~ tags                = {
+          - "BusinessUnit"     = "DTS" -> null
+            "Cost Code ID"     = "IS9210S110"
+            "CostCode"         = "IS9210S110"
+            "DeployedBy"       = "Centrica TN"
+            "Environment"      = "Production"
+            "ServiceOwner"     = "Someone"
+        }
+        # (3 unchanged attributes hidden)
+    }`
+
+func TestCollapseUnchanged_keepOne(t *testing.T) {
+	got := CollapseUnchanged(collapseSample, 1)
+	want := `  # module.nsg["app"].azurerm_network_security_group.main will be updated in-place
+  ~ resource "azurerm_network_security_group" "main" {
+        id                  = "/subscriptions/x/nsg"
+        name                = "nsg-app"
+      ~ tags                = {
+          - "BusinessUnit"     = "DTS" -> null
+            "Cost Code ID"     = "IS9210S110"
+            # ... (6 unchanged lines hidden)
+    }`
+	if got != want {
+		t.Errorf("keep=1 mismatch\n--- got\n%s\n--- want\n%s", got, want)
+	}
+}
+
+func TestCollapseUnchanged_keepZero(t *testing.T) {
+	got := CollapseUnchanged(collapseSample, 0)
+	want := `  # module.nsg["app"].azurerm_network_security_group.main will be updated in-place
+  ~ resource "azurerm_network_security_group" "main" {
+        # ... (2 unchanged lines hidden)
+      ~ tags                = {
+          - "BusinessUnit"     = "DTS" -> null
+            # ... (8 unchanged lines hidden)`
+	if got != want {
+		t.Errorf("keep=0 mismatch\n--- got\n%s\n--- want\n%s", got, want)
+	}
+}
+
+func TestCollapseUnchanged_disabledAndNoGain(t *testing.T) {
+	if got := CollapseUnchanged(collapseSample, -1); got != collapseSample {
+		t.Error("keep<0 must return input unchanged")
+	}
+	// Two context lines between changes with keep=1 → hidden would be 0; no marker.
+	small := "      ~ a = 1 -> 2\n        b = 1\n        c = 2\n      ~ d = 1 -> 2"
+	if got := CollapseUnchanged(small, 1); got != small {
+		t.Errorf("no-gain run must be left alone, got:\n%s", got)
+	}
+	// Exactly one hidden line would not save anything either.
+	three := "      ~ a = 1 -> 2\n        b = 1\n        c = 2\n        e = 3\n      ~ d = 1 -> 2"
+	if got := CollapseUnchanged(three, 1); got != three {
+		t.Errorf("single-line saving must not collapse, got:\n%s", got)
+	}
+	if got := CollapseUnchanged("", 1); got != "" {
+		t.Error("empty input must stay empty")
+	}
+}
+
+func TestCollapseUnchanged_keepsMarkersAndSpecialHeaders(t *testing.T) {
+	text := `  # azurerm_resource_group.rg must be replaced
+  -/+ resource "azurerm_resource_group" "rg" {
+        a = 1
+        b = 2
+        c = 3
+        d = 4
+      ~ name = "old" -> "new"
+    }
+
+  # module.x.data.azurerm_virtual_network.main will be read during apply
+  # (depends on a resource or a module with changes pending)
+ <= data "azurerm_virtual_network" "main" {
+      + id = (known after apply)
+    }`
+	got := CollapseUnchanged(text, 0)
+	for _, must := range []string{
+		"must be replaced", `-/+ resource "azurerm_resource_group"`, `<= data "azurerm_virtual_network"`,
+		"will be read during apply", `~ name = "old" -> "new"`, "# ... (4 unchanged lines hidden)",
+	} {
+		if !strings.Contains(got, must) {
+			t.Errorf("collapsed output lost %q:\n%s", must, got)
+		}
+	}
+	// Idempotent: collapsing twice must not stack markers.
+	if again := CollapseUnchanged(got, 0); again != got {
+		t.Errorf("collapse is not idempotent:\n--- once\n%s\n--- twice\n%s", got, again)
+	}
+}
+
+func TestCollapseUnchanged_thenTextToDiff(t *testing.T) {
+	diff := TextToDiff(CollapseUnchanged(collapseSample, 1))
+	if !strings.Contains(diff, "\n             # ... (6 unchanged lines hidden)") {
+		t.Errorf("marker must survive TextToDiff as a context line:\n%s", diff)
+	}
+	if !strings.Contains(diff, "\n-           \"BusinessUnit\"") {
+		t.Errorf("change line must still get a column-0 symbol:\n%s", diff)
+	}
+}
+
+func TestCollapseUnchanged_neverGrows(t *testing.T) {
+	// Four one-character context lines: the marker would be longer than
+	// the lines it hides, so the run must be left verbatim.
+	short := "      ~ a = 1 -> 2\n  b\n  c\n  d\n  e\n      ~ f = 1 -> 2"
+	if got := CollapseUnchanged(short, 0); got != short {
+		t.Errorf("collapse must never grow the block, got:\n%s", got)
+	}
+	if got := CollapseUnchanged(collapseSample, 0); len(got) >= len(collapseSample) {
+		t.Errorf("realistic block should shrink: %d -> %d", len(collapseSample), len(got))
+	}
+}

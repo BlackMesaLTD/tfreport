@@ -1,0 +1,50 @@
+name: Preset request
+description: Request provider preset support (display names + per-attribute metadata)
+title: "[preset] "
+labels: ["preset"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        tfreport ships presets for a handful of providers under
+        `internal/presets/builtin/`. New presets can be generated from a
+        provider's `website/docs/r/` directory via the `presetgen` tool —
+        see [docs/presetgen.md](../../docs/presetgen.md).
+
+        Preset requests are most useful when they include a pointer to the
+        provider's doc directory so the preset can be generated rather than
+        hand-written.
+
+  - type: input
+    id: provider
+    attributes:
+      label: Provider prefix
+      description: The Terraform provider resource prefix (e.g. `aws`, `google`, `alicloud`).
+      placeholder: aws
+    validations:
+      required: true
+
+  - type: input
+    id: docs
+    attributes:
+      label: Link to provider docs directory
+      description: URL to the `website/docs/r/` directory in the provider's source repo.
+      placeholder: https://github.com/hashicorp/terraform-provider-aws/tree/main/website/docs/r
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+      description: >-
+        All resource types, or a specific subset? Any attributes that need
+        `force_new: true` marking beyond what the provider docs already
+        indicate? Any display-name overrides the default would get wrong?
+
+  - type: checkboxes
+    id: willing
+    attributes:
+      label: Contribution
+      options:
+        - label: I'm willing to open a PR running `presetgen` myself and submitting the generated JSON.

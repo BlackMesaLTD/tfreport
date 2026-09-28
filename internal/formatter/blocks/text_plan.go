@@ -12,6 +12,11 @@ import (
 //
 //	addresses csv  — restrict to these resource addresses; empty → all
 //	fence     str  — override ctx.Output.CodeFormat for this call only
+//	collapse  bool — fold runs of unchanged context lines into a
+//	                 "# ... (N unchanged lines hidden)" marker
+//	                 (default ctx.Output.CollapseUnchanged)
+//	context   int  — unchanged lines kept either side of each change when
+//	                 collapsing (default ctx.Output.UnchangedContext)
 //
 // Budget behavior: consumes bytes from ctx.TextBudget. When the remaining
 // budget is insufficient, truncates at the last newline boundary and appends
@@ -24,10 +29,21 @@ func (TextPlan) Name() string { return "text_plan" }
 func (TextPlan) Render(ctx *BlockContext, args map[string]any) (string, error) {
 	filter := ArgCSV(args, "addresses")
 	fenceOverride := ArgString(args, "fence", "")
+	collapse := ArgBool(args, "collapse", ctx.Output.CollapseUnchanged)
+	keep := ArgInt(args, "context", ctx.Output.UnchangedContext)
 
 	block := collectTextBlocks(ctx, filter)
 	if block == "" {
 		return "", nil
+	}
+
+	// Collapse before diff conversion and before the budget check so the
+	// saved bytes are what get charged against ctx.TextBudget.
+	if collapse {
+		if keep < 0 {
+			keep = 0
+		}
+		block = core.CollapseUnchanged(block, keep)
 	}
 
 	fence := codeFence(ctx)
@@ -44,22 +60,30 @@ func (TextPlan) Render(ctx *BlockContext, args map[string]any) (string, error) {
 		block += "\n"
 	}
 
+	return fencedBudgeted(ctx, fence, block), nil
+}
+
+// fencedBudgeted wraps an already diff-converted block in a code fence,
+// charging ctx.TextBudget and truncating at a newline boundary with the
+// "# ... truncated (output size limit)" marker when the budget runs out.
+// Shared by text_plan and rule_delta so both honour one budget.
+func fencedBudgeted(ctx *BlockContext, fence, block string) string {
 	if ctx.TextBudget == nil || ctx.TextBudget.Remaining >= len(block) {
 		if ctx.TextBudget != nil {
 			ctx.TextBudget.Remaining -= len(block)
 		}
-		return fmt.Sprintf("%s\n%s%s", fence, block, "```"), nil
+		return fmt.Sprintf("%s\n%s%s", fence, block, "```")
 	}
 
 	if ctx.TextBudget.Remaining <= 0 {
-		return "", nil
+		return ""
 	}
 	truncated := block[:ctx.TextBudget.Remaining]
 	if lastNL := strings.LastIndex(truncated, "\n"); lastNL > 0 {
 		truncated = truncated[:lastNL+1]
 	}
 	ctx.TextBudget.Remaining = 0
-	return fmt.Sprintf("%s\n%s\n# ... truncated (output size limit)\n```", fence, truncated), nil
+	return fmt.Sprintf("%s\n%s\n# ... truncated (output size limit)\n```", fence, truncated)
 }
 
 // collectTextBlocks concatenates text-plan blocks for addresses that appear
@@ -98,10 +122,12 @@ func collectTextBlocks(ctx *BlockContext, filter []string) string {
 func (TextPlan) Doc() BlockDoc {
 	return BlockDoc{
 		Name:    "text_plan",
-		Summary: "Native terraform plan text block, budget-aware. Truncates at newline boundaries when ctx.TextBudget would be exceeded.",
+		Summary: "Native terraform plan text block, budget-aware. Truncates at newline boundaries when ctx.TextBudget would be exceeded. Optionally collapses runs of unchanged context lines.",
 		Args: []ArgDoc{
 			{Name: "addresses", Type: "csv", Default: "(all resources in report)", Description: "Restrict to these resource addresses; empty renders every address with a text block."},
 			{Name: "fence", Type: "string", Default: "(from ctx.Output.CodeFormat)", Description: "Override code fence language: `diff`, `hcl`, `terraform`, or any other for plain."},
+			{Name: "collapse", Type: "bool", Default: "(from output.collapse_unchanged)", Description: "Fold runs of unchanged context lines into a `# ... (N unchanged lines hidden)` marker. Resource marker lines are always kept. Collapsing happens before the budget is charged, so it stretches `step_summary_max_kb`."},
+			{Name: "context", Type: "int", Default: "(from output.unchanged_context, 1)", Description: "Unchanged lines kept either side of every changed line when `collapse` is on. `0` keeps only the changed lines and the resource marker."},
 		},
 	}
 }
