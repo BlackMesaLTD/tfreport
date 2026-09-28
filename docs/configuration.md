@@ -293,6 +293,10 @@ with the rule name (`security_rule[allow-443].priority`, `security_rule[allow-44
 styles share one grammar. Impact overrides on the resource's own attribute
 (`priority`) still apply to the prefixed key.
 
+The `rule_delta` block renders the same pairing as a terraform-style diff
+per rule (only differing fields, verdict comment, unchanged counts); see
+[docs/blocks.md](blocks.md#rule_delta).
+
 Impact lookup tries the full key, then the base attribute, so
 `resources.azurerm_network_security_group.attributes.security_rule.impact: high`
 covers every `security_rule[...]` key. the cosmetic verdict keys (`string_to_list`, `list_to_string`, `case_only`, `rewritten`, `order`) default to

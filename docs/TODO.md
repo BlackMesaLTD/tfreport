@@ -86,13 +86,12 @@ Five formatters are implemented, all targeting GitHub. GitLab MR comments and At
 
 **What's needed:** parse `resource_drift` into `Report.Drift` (address, action, changed keys); extend `markerRe` so drift text blocks are captured under a separate map; a `drift` block (table by default) and a "N resources changed outside Terraform" line in `plan_counts`.
 
-## Nested block sets — rule_delta block and AWS
+## Nested block sets — AWS
 
-**Status:** `core.ExpandNestedChanges` reports `azurerm_network_security_group.security_rule` and `azurerm_route_table.route` per element (added / removed / field / format / order) with CIDR list-vs-string and case normalisation. Text-plan blocks still show the raw `-`/`+` object pair.
+**Status:** `core.ExpandNestedChanges` reports `azurerm_network_security_group.security_rule` and `azurerm_route_table.route` per element (added / removed / field / string_to_list / list_to_string / case_only / order) with CIDR list-vs-string and case normalisation, and `core.BuildRuleDiff` renders a per-rule terraform-style diff (`rule_delta` block). Object-style `azurerm_network_security_rule` / `azurerm_route` share the same grammar.
 
 **What's needed:**
-- `rule_delta` block: per-rule table (name, verdict, changed fields, old → new) for the step summary and PR comment.
-- AWS entries in `nestedSetSpecs` (`aws_security_group.ingress/egress`, `aws_route_table.route`) once an identity key is agreed (AWS rules have no `name`).
+- AWS entries in `nestedSetSpecs` (`aws_security_group.ingress/egress`, `aws_route_table.route`) once an identity key is agreed (AWS rules have no `name`; a composite of protocol+ports+cidr is the likely key).
 
 ## Action / binary version pin
 

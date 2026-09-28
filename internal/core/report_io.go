@@ -13,6 +13,7 @@ type reportJSON struct {
 	MaxImpact      string            `json:"max_impact"`
 	ModuleSources  map[string]string `json:"module_sources,omitempty"`
 	TextPlanBlocks map[string]string `json:"text_plan_blocks,omitempty"`
+	RuleDiffs      map[string]string `json:"rule_diffs,omitempty"`
 	DisplayNames   map[string]string `json:"display_names,omitempty"`
 	Custom         map[string]string `json:"custom,omitempty"`
 }
@@ -59,6 +60,7 @@ func MarshalReport(r *Report) ([]byte, error) {
 		KeyChanges:     marshalKeyChanges(r.KeyChanges),
 		ModuleSources:  r.ModuleSources,
 		TextPlanBlocks: r.TextPlanBlocks,
+		RuleDiffs:      r.RuleDiffs,
 		DisplayNames:   r.DisplayNames,
 		Custom:         r.Custom,
 		ModuleGroups:   make([]moduleGroupJSON, len(r.ModuleGroups)),
@@ -96,6 +98,7 @@ func UnmarshalReport(data []byte) (*Report, error) {
 		KeyChanges:     unmarshalKeyChanges(jr.KeyChanges),
 		ModuleSources:  jr.ModuleSources,
 		TextPlanBlocks: jr.TextPlanBlocks,
+		RuleDiffs:      jr.RuleDiffs,
 		DisplayNames:   jr.DisplayNames,
 		Custom:         jr.Custom,
 		ModuleGroups:   make([]ModuleGroup, len(jr.ModuleGroups)),

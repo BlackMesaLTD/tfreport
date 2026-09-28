@@ -60,22 +60,30 @@ func (TextPlan) Render(ctx *BlockContext, args map[string]any) (string, error) {
 		block += "\n"
 	}
 
+	return fencedBudgeted(ctx, fence, block), nil
+}
+
+// fencedBudgeted wraps an already diff-converted block in a code fence,
+// charging ctx.TextBudget and truncating at a newline boundary with the
+// "# ... truncated (output size limit)" marker when the budget runs out.
+// Shared by text_plan and rule_delta so both honour one budget.
+func fencedBudgeted(ctx *BlockContext, fence, block string) string {
 	if ctx.TextBudget == nil || ctx.TextBudget.Remaining >= len(block) {
 		if ctx.TextBudget != nil {
 			ctx.TextBudget.Remaining -= len(block)
 		}
-		return fmt.Sprintf("%s\n%s%s", fence, block, "```"), nil
+		return fmt.Sprintf("%s\n%s%s", fence, block, "```")
 	}
 
 	if ctx.TextBudget.Remaining <= 0 {
-		return "", nil
+		return ""
 	}
 	truncated := block[:ctx.TextBudget.Remaining]
 	if lastNL := strings.LastIndex(truncated, "\n"); lastNL > 0 {
 		truncated = truncated[:lastNL+1]
 	}
 	ctx.TextBudget.Remaining = 0
-	return fmt.Sprintf("%s\n%s\n# ... truncated (output size limit)\n```", fence, truncated), nil
+	return fmt.Sprintf("%s\n%s\n# ... truncated (output size limit)\n```", fence, truncated)
 }
 
 // collectTextBlocks concatenates text-plan blocks for addresses that appear

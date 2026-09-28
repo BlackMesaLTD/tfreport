@@ -118,6 +118,7 @@ func (e *Engine) buildFuncMap(ctx *blocks.BlockContext) template.FuncMap {
 	funcs["module_details"] = blockFunc("module_details")
 	funcs["modules_table"] = blockFunc("modules_table")
 	funcs["text_plan"] = blockFunc("text_plan")
+	funcs["rule_delta"] = blockFunc("rule_delta")
 	funcs["changed_resources_table"] = blockFunc("changed_resources_table")
 	funcs["deploy_checklist"] = blockFunc("deploy_checklist")
 	funcs["title"] = blockFunc("title")

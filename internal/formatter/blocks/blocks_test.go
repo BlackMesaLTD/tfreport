@@ -313,3 +313,24 @@ func TestTextPlan_collapseUnchanged(t *testing.T) {
 		t.Errorf("context=0 should hide all 4 context lines, got:\n%s", out)
 	}
 }
+
+func TestRuleDelta_rendersAndChargesBudget(t *testing.T) {
+	ctx := fixtureCtx(t, "github-step-summary")
+	addr := ctx.Report.ModuleGroups[0].Changes[0].Address
+	ctx.Report.RuleDiffs = map[string]string{addr: "  # security_rule \"x\" — priority 1 → 2\n  ~ security_rule \"x\" {\n      ~ priority = 1 -> 2\n    }"}
+	ctx.TextBudget = &TextPlanBudget{Remaining: 1 << 20}
+	out, err := RuleDelta{}.Render(ctx, map[string]any{"addresses": addr})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(out, "```diff\n") || !strings.Contains(out, "\n!   security_rule \"x\" {") {
+		t.Errorf("want diff-fenced per-rule block, got:\n%s", out)
+	}
+	if ctx.TextBudget.Remaining == 1<<20 {
+		t.Error("rule_delta must charge the shared text budget")
+	}
+	out, err = RuleDelta{}.Render(ctx, map[string]any{"addresses": "module.nope.azurerm_thing.x"})
+	if err != nil || out != "" {
+		t.Errorf("unknown address must render empty, got %q err %v", out, err)
+	}
+}

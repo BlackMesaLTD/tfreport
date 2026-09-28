@@ -338,6 +338,18 @@ Impact-level distribution across all resources in scope. Three visual styles (ba
 | `impact` | Impact | Impact label (emoji + name). |
 
 
+### `rule_delta`
+
+Per-rule terraform-style diff for block-set resources (NSG security_rule, route-table route): elements paired by name, only differing fields shown, verdict comment per rule. Empty for resources without a rule diff.
+
+**Args:**
+
+| Name | Type | Default | Description |
+|------|------|---------|-------------|
+| `addresses` | `csv` | (all resources with a rule diff) | Restrict to these resource addresses. |
+| `fence` | `string` | (from ctx.Output.CodeFormat) | Override code fence language: `diff`, `hcl`, `terraform`, or any other for plain. |
+
+
 ### `submodule_group`
 
 Nested <details> collapsibles per sub-module of a given top-level module instance. Extracted from instance_detail's internal grouping.
