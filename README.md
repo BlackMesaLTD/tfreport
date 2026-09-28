@@ -41,6 +41,28 @@ terraform show -json plan.out | tfreport --target github-pr-body
 tfreport --plan-file plan.show.json --target json
 ```
 
+## Inspect a plan locally
+
+`tfreport inspect` is a workbench over the same engine CI renders: ask
+questions of a plan on your machine, from whatever you have to hand.
+
+```bash
+tfreport inspect plan.out                     # breakdown: type × action, attrs driving updates, replacements (with forced-by), creates, destroys
+tfreport inspect plan.show.json plan.txt      # the two files CI has
+tfreport inspect report.json                  # a prepare artifact downloaded from a run
+tfreport inspect plan.out --attr tags         # every resource touching an attribute (base key or prefix)
+tfreport inspect plan.out --show 'nsg["app"]' --diff-only   # one resource: per-rule diff, then the raw block with context collapsed
+tfreport inspect plan.out --rules             # NSG / route-table rule delta: net-losing sets, removed-and-not-re-added names, cosmetic-only counts
+tfreport inspect plan.out --type subnet --action replace --json
+```
+
+Parsed input is cached under `$XDG_CACHE_HOME/tfreport` (override with
+`TFREPORT_CACHE_DIR`), keyed on file identity, config and binary version,
+so repeated questions are instant. Colour is on for terminals and off for
+pipes or `NO_COLOR`. `inspect` never parses anything the report does not
+already carry — if a question cannot be answered, the fix belongs in core
+so CI benefits too.
+
 ## Install
 
 **Prebuilt binary (recommended — includes `tfreport-from-plan`):** Download the archive for your platform from the [Releases page](https://github.com/BlackMesaLTD/tfreport/releases/latest) and extract both `tfreport` and `tfreport-from-plan` into your `$PATH`.

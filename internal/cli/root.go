@@ -450,15 +450,20 @@ func buildReportFromPlan(cfg config.Config) (*core.Report, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reading plan JSON: %w", err)
 	}
+	return buildReportFromBytes(cfg, planJSON, flagTextPlanFile, flagChangedOnly, flagPreserve)
+}
 
+// buildReportFromBytes runs the full plan pipeline over plan JSON bytes plus
+// an optional text plan file. Shared by the root render path and `inspect`.
+func buildReportFromBytes(cfg config.Config, planJSON []byte, textPlanFile string, changedOnly bool, preserve []string) (*core.Report, error) {
 	if !json.Valid(planJSON) {
 		return nil, fmt.Errorf("input is not valid JSON")
 	}
 
 	opts := core.ReportOptions{
-		ChangedOnly:        flagChangedOnly,
+		ChangedOnly:        changedOnly,
 		ImpactOverrides:    cfg.ImpactOverrides(),
-		PreserveAttributes: resolvePreserveAttributes(flagPreserve, cfg.Output.PreserveAttributes),
+		PreserveAttributes: resolvePreserveAttributes(preserve, cfg.Output.PreserveAttributes),
 		Warn: func(msg string) {
 			fmt.Fprintln(os.Stderr, msg)
 		},
@@ -503,8 +508,8 @@ func buildReportFromPlan(cfg config.Config) (*core.Report, error) {
 		return nil, fmt.Errorf("generating report: %w", err)
 	}
 
-	if flagTextPlanFile != "" {
-		textData, err := os.ReadFile(flagTextPlanFile)
+	if textPlanFile != "" {
+		textData, err := os.ReadFile(textPlanFile)
 		if err != nil {
 			return nil, fmt.Errorf("reading text plan file: %w", err)
 		}

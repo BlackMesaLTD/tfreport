@@ -39,6 +39,7 @@ type resourceJSON struct {
 	Action            string            `json:"action"`
 	Impact            string            `json:"impact"`
 	IsImport          bool              `json:"is_import,omitempty"`
+	ReplacePaths      []string          `json:"replace_paths,omitempty"`
 	DisplayLabel      string            `json:"display_label,omitempty"`
 	ChangedAttributes []changedAttrJSON `json:"changed_attributes,omitempty"`
 	Preserved         map[string]any    `json:"preserved,omitempty"`
@@ -135,6 +136,7 @@ func marshalResource(rc ResourceChange) resourceJSON {
 		Action:       string(rc.Action),
 		Impact:       string(rc.Impact),
 		IsImport:     rc.IsImport,
+		ReplacePaths: rc.ReplacePaths,
 		DisplayLabel: rc.DisplayLabel,
 		Preserved:    rc.Preserved,
 	}
@@ -157,6 +159,7 @@ func unmarshalResource(jr resourceJSON) ResourceChange {
 		Action:       Action(jr.Action),
 		Impact:       Impact(jr.Impact),
 		IsImport:     jr.IsImport,
+		ReplacePaths: jr.ReplacePaths,
 		DisplayLabel: jr.DisplayLabel,
 		Preserved:    jr.Preserved,
 	}

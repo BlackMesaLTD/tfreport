@@ -2,6 +2,7 @@ package core
 
 import (
 	"os"
+	"strings"
 	"testing"
 
 	tfjson "github.com/hashicorp/terraform-json"
@@ -365,5 +366,21 @@ func TestParsePlan_IsImport(t *testing.T) {
 	}
 	if changes[2].IsImport {
 		t.Error("changes[2] IsImport = true, want false (plain create)")
+	}
+}
+
+func TestParsePlan_replacePaths(t *testing.T) {
+	plan := `{"format_version":"1.2","resource_changes":[{"address":"azurerm_subnet.a","mode":"managed","type":"azurerm_subnet","name":"a",
+	  "change":{"actions":["delete","create"],"before":{"name":"x"},"after":{"name":"y"},"replace_paths":[["name"],["delegation",0,"name"]]}}]}`
+	changes, err := ParsePlan([]byte(plan))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changes) != 1 || changes[0].Action != ActionReplace {
+		t.Fatalf("unexpected changes: %+v", changes)
+	}
+	got := strings.Join(changes[0].ReplacePaths, ",")
+	if got != "name,delegation.0.name" {
+		t.Errorf("replace paths = %q", got)
 	}
 }
