@@ -524,7 +524,7 @@ func renderModuleNodeChangedAttrs(n *core.Node, mode string) string {
 		}
 	}
 	if len(meaningfulAttrs) > 0 {
-		return unionAttrKeysFromSlice(meaningfulAttrs)
+		return groupedAttrKeys(n, core.ActionUpdate, core.ActionReplace)
 	}
 
 	// Whole instance is create/delete/read/no-op. Mode picks the placeholder.
@@ -556,11 +556,126 @@ func renderModuleNodeChangedAttrs(n *core.Node, mode string) string {
 // nested sub-module descendants). Empty result returns "—" as a
 // cell-safe placeholder.
 func unionAttrKeysFromNode(n *core.Node, _ bool) string {
-	var all []core.ChangedAttribute
-	for _, rc := range resourcesUnder(n) {
-		all = append(all, rc.ChangedAttributes...)
+	return groupedAttrKeys(n)
+}
+
+// groupedAttrKeys renders the changed-attribute cell for a module
+// instance without losing which resource an expanded key belongs to.
+// Plain keys (tags, location, …) are unioned across every resource as
+// before. Expanded block-set keys (security_rule[<name>].…) are grouped
+// under the sub-module (or resource) that owns them, and cosmetic
+// verdicts are counted rather than listed, so 160 rules rewritten as lists
+// read as one entry:
+//
+//	`tags`; `nsg["evwprod-mgmt"]`: `security_rule[coreplf-mailbox-out].removed`, `security_rule[…×160].string_to_list`
+//
+// actions, when given, restrict which resources contribute (the dash /
+// wordy modes pass update+replace; list mode passes nothing = all).
+func groupedAttrKeys(n *core.Node, actions ...core.Action) string {
+	want := map[core.Action]bool{}
+	for _, a := range actions {
+		want[a] = true
 	}
-	return unionAttrKeysFromSlice(all)
+	plain := map[string]struct{}{}
+	type ownerEntry struct {
+		real   map[string]struct{}
+		counts map[string]int    // verdict → count
+		single map[string]string // verdict → the one key, when count == 1
+		base   string
+	}
+	owners := map[string]*ownerEntry{}
+	var ownerOrder []string
+	for _, rc := range resourcesUnder(n) {
+		if len(want) > 0 && !want[rc.Action] {
+			continue
+		}
+		for _, a := range rc.ChangedAttributes {
+			if !strings.Contains(a.Key, "[") && core.CosmeticVerdict(a.Key) == "" {
+				plain[a.Key] = struct{}{}
+				continue
+			}
+			label := ownerLabel(rc)
+			o, ok := owners[label]
+			if !ok {
+				o = &ownerEntry{real: map[string]struct{}{}, counts: map[string]int{}, single: map[string]string{}}
+				owners[label] = o
+				ownerOrder = append(ownerOrder, label)
+			}
+			if v := core.CosmeticVerdict(a.Key); v != "" {
+				o.counts[v]++
+				o.single[v] = a.Key
+				o.base = core.BaseAttributeKey(a.Key)
+				continue
+			}
+			o.real[a.Key] = struct{}{}
+		}
+	}
+	if len(plain) == 0 && len(owners) == 0 {
+		return "—"
+	}
+	var segments []string
+	if len(plain) > 0 {
+		segments = append(segments, backtickedSorted(plain))
+	}
+	sortStrings(ownerOrder)
+	for _, label := range ownerOrder {
+		o := owners[label]
+		var parts []string
+		if len(o.real) > 0 {
+			parts = append(parts, backtickedSorted(o.real))
+		}
+		verdicts := make([]string, 0, len(o.counts))
+		for v := range o.counts {
+			verdicts = append(verdicts, v)
+		}
+		sortStrings(verdicts)
+		for _, v := range verdicts {
+			if o.counts[v] == 1 {
+				parts = append(parts, "`"+o.single[v]+"`")
+			} else {
+				parts = append(parts, fmt.Sprintf("`%s[…×%d].%s`", o.base, o.counts[v], v))
+			}
+		}
+		seg := strings.Join(parts, ", ")
+		if label != "" {
+			seg = "`" + label + "`: " + seg
+		}
+		segments = append(segments, seg)
+	}
+	return strings.Join(segments, "; ")
+}
+
+// ownerLabel names the sub-module (relative to the top-level instance) or,
+// for a resource sitting directly in the instance, the resource itself.
+// module.vnet.module.nsg["app"].azurerm_network_security_group.main → nsg["app"]
+// module.vnet.azurerm_network_security_group.main                   → azurerm_network_security_group.main
+func ownerLabel(rc *core.ResourceChange) string {
+	m := core.ParseModuleAddress(rc.ModulePath)
+	if len(m.Segments) <= 1 {
+		return rc.ResourceType + "." + rc.ResourceName
+	}
+	parts := make([]string, 0, len(m.Segments)-1)
+	for _, seg := range m.Segments[1:] {
+		if seg.Instance != "" {
+			parts = append(parts, seg.Name+"["+seg.Instance+"]")
+		} else {
+			parts = append(parts, seg.Name)
+		}
+	}
+	return strings.Join(parts, ".")
+}
+
+func backtickedSorted(set map[string]struct{}) string {
+	keys := make([]string, 0, len(set))
+	for k := range set {
+		keys = append(keys, k)
+	}
+	sortStrings(keys)
+	parts := make([]string, len(keys))
+	for i, k := range keys {
+		parts[i] = "`" + k + "`"
+	}
+	return strings.Join(parts, ", ")
 }
 
 // resourcesUnder returns every ResourceChange in n's subtree in tree

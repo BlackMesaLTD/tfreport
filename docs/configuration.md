@@ -278,7 +278,9 @@ of one opaque `security_rule` key:
 |---|---|
 | `security_rule[<name>].added` / `.removed` | rule present only after / only before |
 | `security_rule[<name>].<field>` | that field differs after normalisation (Description shows `old → new`) |
-| `security_rule[<name>].format` | same members; only string-vs-list shape or letter case differs |
+| `security_rule[<name>].[<fields>].string_to_list` | same members; those fields moved from string to list form |
+| `security_rule[<name>].[<fields>].list_to_string` | the reverse (console save, bulk update script) |
+| `security_rule[<name>].<field>.case_only` | letter case only |
 | `security_rule.order` | identical set, elements reordered |
 
 Normalisation merges `source_address_prefix` with `source_address_prefixes`
@@ -287,13 +289,13 @@ Normalisation merges `source_address_prefix` with `source_address_prefixes`
 empty lists and nulls as equal. `azurerm_network_security_rule` and
 `azurerm_route` (object-style modules, one resource per rule) get the same
 equivalence on their own attributes, and on update their keys are prefixed
-with the rule name (`security_rule[allow-443].priority`) so both module
+with the rule name (`security_rule[allow-443].priority`, `security_rule[allow-443].[destination_address_prefixes,source_address_prefixes].string_to_list`) so both module
 styles share one grammar. Impact overrides on the resource's own attribute
 (`priority`) still apply to the prefixed key.
 
 Impact lookup tries the full key, then the base attribute, so
 `resources.azurerm_network_security_group.attributes.security_rule.impact: high`
-covers every `security_rule[...]` key. `.format` / `.order` keys default to
+covers every `security_rule[...]` key. the cosmetic verdict keys (`string_to_list`, `list_to_string`, `case_only`, `rewritten`, `order`) default to
 `none`; override them explicitly if you want cosmetic rewrites to count:
 
 ```yaml

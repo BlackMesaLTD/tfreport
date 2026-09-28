@@ -501,3 +501,32 @@ func TestTable_ModuleInstanceChangedAttrsIncludesNestedSubmodules(t *testing.T) 
 		}
 	}
 }
+
+// Expanded keys stay attributed to the NSG that owns them, and cosmetic
+// rewrites are counted instead of listed one per rule.
+func TestTable_ModuleInstanceChangedAttrsGroupsByOwner(t *testing.T) {
+	cos := func(name string) core.ChangedAttribute {
+		return core.ChangedAttribute{Key: "security_rule[" + name + "].[destination_address_prefixes,source_address_prefixes].string_to_list"}
+	}
+	r := &core.Report{Label: "r", ModuleGroups: []core.ModuleGroup{
+		{Name: "nsg", Path: `module.infra.module.nsg["mgmt"]`, Changes: []core.ResourceChange{{
+			Address: `module.infra.module.nsg["mgmt"].azurerm_network_security_group.main`, ModulePath: `module.infra.module.nsg["mgmt"]`,
+			ResourceType: "azurerm_network_security_group", ResourceName: "main", Action: core.ActionUpdate,
+			ChangedAttributes: []core.ChangedAttribute{cos("a"), cos("b"), cos("c"), {Key: "security_rule[mail-out].removed"}, {Key: "tags"}},
+		}}},
+		{Name: "nsg", Path: `module.infra.module.nsg["web"]`, Changes: []core.ResourceChange{{
+			Address: `module.infra.module.nsg["web"].azurerm_network_security_group.main`, ModulePath: `module.infra.module.nsg["web"]`,
+			ResourceType: "azurerm_network_security_group", ResourceName: "main", Action: core.ActionUpdate,
+			ChangedAttributes: []core.ChangedAttribute{cos("z")},
+		}}},
+	}}
+	ctx := &BlockContext{Target: "github-pr-body", Report: r, Tree: core.BuildTree(r), Output: OutputOptions{CodeFormat: "diff"}}
+	out, err := (Table{}).Render(ctx, map[string]any{"source": "module_instance", "columns": "module,changed_attrs"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "`tags`; `nsg[\"mgmt\"]`: `security_rule[mail-out].removed`, `security_rule[…×3].string_to_list`; `nsg[\"web\"]`: `security_rule[z].[destination_address_prefixes,source_address_prefixes].string_to_list`"
+	if !strings.Contains(out, want) {
+		t.Errorf("grouped cell mismatch\n got: %s\nwant: %s", out, want)
+	}
+}

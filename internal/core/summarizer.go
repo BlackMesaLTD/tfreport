@@ -51,7 +51,17 @@ func groupChanges(changes []ResourceChange) []changeGroup {
 			continue
 		}
 
-		attrKeys := ChangedAttributeKeys(rc.ChangedAttributes)
+		// Group on summary keys so per-element expansions (160 rules
+		// rewritten as lists) fold into one "security_rule.string_to_list".
+		seen := map[string]struct{}{}
+		var attrKeys []string
+		for _, k := range ChangedAttributeKeys(rc.ChangedAttributes) {
+			sk := SummaryKey(k)
+			if _, dup := seen[sk]; !dup {
+				seen[sk] = struct{}{}
+				attrKeys = append(attrKeys, sk)
+			}
+		}
 		sort.Strings(attrKeys)
 		attrSet := strings.Join(attrKeys, ",")
 

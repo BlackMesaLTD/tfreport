@@ -43,7 +43,7 @@ func TestExpandNestedChanges_nsgRules(t *testing.T) {
 		{Key: "security_rule", OldValue: before, NewValue: after},
 		{Key: "tags", OldValue: map[string]any{"a": "1"}, NewValue: map[string]any{"a": "2"}},
 	})
-	want := "security_rule[gone].removed security_rule[new].added security_rule[prio].description security_rule[prio].priority security_rule[shape].format tags"
+	want := "security_rule[gone].removed security_rule[new].added security_rule[prio].description security_rule[prio].priority security_rule[shape].[destination_address_prefixes,destination_port_ranges,protocol].list_to_string tags"
 	if keysOf(got) != want {
 		t.Fatalf("keys mismatch\n got: %s\nwant: %s", keysOf(got), want)
 	}
@@ -57,7 +57,10 @@ func TestExpandNestedChanges_nsgRules(t *testing.T) {
 	if d := byKey["security_rule[new].added"].Description; !strings.Contains(d, "allow inbound tcp port 443,80") {
 		t.Errorf("added description: %q", d)
 	}
-	if !IsCosmeticKey("security_rule[shape].format") || IsCosmeticKey("security_rule[prio].priority") {
+	if d := byKey["security_rule[shape].[destination_address_prefixes,destination_port_ranges,protocol].list_to_string"].Description; !strings.Contains(d, "written as a string instead of a list (plus letter case)") {
+		t.Errorf("string_to_list description: %q", d)
+	}
+	if !IsCosmeticKey("security_rule[shape].[destination_address_prefixes,destination_port_ranges,protocol].list_to_string") || IsCosmeticKey("security_rule[prio].priority") {
 		t.Error("IsCosmeticKey wrong")
 	}
 	if BaseAttributeKey("security_rule[prio].priority") != "security_rule" || BaseAttributeKey("security_rule.order") != "security_rule" || BaseAttributeKey("tags") != "tags" {
@@ -104,7 +107,7 @@ func TestExpandNestedChanges_routeTable(t *testing.T) {
 		{Key: "route", OldValue: []any{r("dflt", "0.0.0.0/0", "VirtualAppliance"), r("x", "10.1.0.0/16", "VnetLocal")},
 			NewValue: []any{r("dflt", "0.0.0.0/0", "virtualappliance"), r("x", "10.2.0.0/16", "VnetLocal")}},
 	})
-	if keysOf(got) != "route[dflt].format route[x].address_prefix" {
+	if keysOf(got) != "route[dflt].next_hop_type.case_only route[x].address_prefix" {
 		t.Errorf("got %s", keysOf(got))
 	}
 }
@@ -116,7 +119,7 @@ func TestExpandNestedChanges_flatRuleResource(t *testing.T) {
 		{Key: "protocol", OldValue: "Tcp", NewValue: "TCP"},
 		{Key: "priority", OldValue: 100.0, NewValue: 110.0},
 	})
-	if keysOf(got) != "priority source_address_prefixes.format protocol.format" {
+	if keysOf(got) != "priority [protocol,source_address_prefixes].string_to_list" {
 		t.Errorf("got %s", keysOf(got))
 	}
 	// Real membership change stays as-is.
@@ -161,13 +164,13 @@ func TestExpandResourceChanges_objectStyleRule(t *testing.T) {
 		},
 	}
 	ExpandResourceChanges(&rc)
-	if got := keysOf(rc.ChangedAttributes); got != "security_rule[allow-443].priority security_rule[allow-443].source_address_prefixes.format" {
+	if got := keysOf(rc.ChangedAttributes); got != "security_rule[allow-443].priority security_rule[allow-443].source_address_prefixes.string_to_list" {
 		t.Errorf("got %s", got)
 	}
 	if FieldOfAttributeKey("security_rule[allow-443].priority") != "priority" || FieldOfAttributeKey("priority") != "" {
 		t.Error("FieldOfAttributeKey wrong")
 	}
-	if !IsCosmeticKey("security_rule[allow-443].source_address_prefixes.format") {
+	if !IsCosmeticKey("security_rule[allow-443].source_address_prefixes.string_to_list") {
 		t.Error("prefixed format key must stay cosmetic")
 	}
 	// Creates keep plain keys: the address already names the rule.
@@ -176,5 +179,31 @@ func TestExpandResourceChanges_objectStyleRule(t *testing.T) {
 	ExpandResourceChanges(&rc2)
 	if keysOf(rc2.ChangedAttributes) != "priority" {
 		t.Errorf("create must be untouched, got %s", keysOf(rc2.ChangedAttributes))
+	}
+}
+
+func TestCosmeticVerdicts_directionsAndSummaryKey(t *testing.T) {
+	// list → string (console / bulk-script rewrite) on two fields at once.
+	before := rule("r", 1, map[string]any{"source_address_prefixes": []any{"10.0.0.0/8"}, "source_address_prefix": "",
+		"destination_address_prefixes": []any{"10.1.0.0/8"}, "destination_address_prefix": ""})
+	after := rule("r", 1, map[string]any{"source_address_prefixes": []any{}, "source_address_prefix": "10.0.0.0/8",
+		"destination_address_prefixes": []any{}, "destination_address_prefix": "10.1.0.0/8"})
+	got := ExpandNestedChanges("azurerm_network_security_group", []ChangedAttribute{{Key: "security_rule", OldValue: []any{before}, NewValue: []any{after}}})
+	if keysOf(got) != "security_rule[r].[destination_address_prefixes,source_address_prefixes].list_to_string" {
+		t.Errorf("got %s", keysOf(got))
+	}
+	for k, want := range map[string]string{
+		"security_rule[r].[destination_address_prefixes,source_address_prefixes].list_to_string": "security_rule.list_to_string",
+		"security_rule[ext-download.ipex.it-ftps-access].added":                                  "security_rule.added",
+		"security_rule[x].priority":                                                             "security_rule.priority",
+		"security_rule.order":                                                                   "security_rule.order",
+		"tags":                                                                                  "tags",
+	} {
+		if SummaryKey(k) != want {
+			t.Errorf("SummaryKey(%q) = %q, want %q", k, SummaryKey(k), want)
+		}
+	}
+	if CosmeticVerdict("security_rule[r].x.list_to_string") != "list_to_string" || CosmeticVerdict("security_rule[r].priority") != "" {
+		t.Error("CosmeticVerdict wrong")
 	}
 }

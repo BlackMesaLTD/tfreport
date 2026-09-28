@@ -31,9 +31,20 @@ type NestedSetSpec struct {
 const (
 	NestedAdded   = "added"   // element present only after
 	NestedRemoved = "removed" // element present only before
-	NestedFormat  = "format"  // members identical after normalisation; shape/case differs
 	NestedOrder   = "order"   // whole set identical after normalisation; elements reordered
+
+	// Cosmetic verdicts: the element's members are identical after
+	// normalisation, only the shape changed. The key names the fields
+	// involved: <attr>[<id>].[field_a,field_b].<verdict> (single field:
+	// <attr>[<id>].field_a.<verdict>).
+	NestedStringToList = "string_to_list" // e.g. source_address_prefix "x" → source_address_prefixes ["x"]
+	NestedListToString = "list_to_string" // the reverse (console / bulk-script rewrite)
+	NestedCaseOnly     = "case_only"      // "Tcp" → "TCP"
+	NestedRewritten    = "rewritten"      // mixed directions in one element
 )
+
+// cosmeticSuffixes are the verdicts IsCosmeticKey recognises.
+var cosmeticSuffixes = []string{NestedStringToList, NestedListToString, NestedCaseOnly, NestedRewritten, NestedOrder}
 
 var nsgRulePairs = [][2]string{
 	{"source_address_prefix", "source_address_prefixes"},
@@ -130,15 +141,19 @@ func NestedSetSpecsFor(resourceType string) []NestedSetSpec {
 //	<attr>[<id>].added      element only in after (NewValue = element)
 //	<attr>[<id>].removed    element only in before (OldValue = element)
 //	<attr>[<id>].<field>    field differs after normalisation (Old/New = field values)
-//	<attr>[<id>].format     element identical after normalisation, raw form differs
+//	<attr>[<id>].[f1,f2].string_to_list   same members; those fields moved from string to list form
+//	<attr>[<id>].[f1,f2].list_to_string   the reverse
+//	<attr>[<id>].<f>.case_only            letter case only
+//	<attr>[<id>].[f1,f2].rewritten        mixed directions in one element
 //	<attr>.order            every element identical after normalisation; reordered only
 //
 // Description carries a short human phrase ("rule added", "100 → 110",
-// "list/string form only"). Attributes that are Computed, Sensitive, not
-// lists, or whose elements lack IDKey are returned untouched. Flat rule
-// resources (azurerm_network_security_rule) get the pair/case equivalence
-// applied to their own top-level attributes: a scalar↔list rewrite with the
-// same members collapses to "<list_attr>.format".
+// "same members, written as a list instead of a string"). Attributes that
+// are Computed, Sensitive, not lists, or whose elements lack IDKey are
+// returned untouched. Flat rule resources (azurerm_network_security_rule)
+// get the pair/case equivalence applied to their own top-level attributes:
+// a scalar↔list rewrite with the same members collapses to one
+// "[<list_attrs>].<verdict>" key.
 func ExpandNestedChanges(resourceType string, attrs []ChangedAttribute) []ChangedAttribute {
 	if spec, ok := flatSpecs[resourceType]; ok {
 		return collapseFlatEquivalents(spec, attrs)
@@ -198,7 +213,8 @@ func expandSet(spec NestedSetSpec, a ChangedAttribute) ([]ChangedAttribute, bool
 			co, cn := normaliseElement(spec, o), normaliseElement(spec, n)
 			fields := diffFields(co, cn)
 			if len(fields) == 0 {
-				out = append(out, ChangedAttribute{Key: key + "." + NestedFormat, OldValue: o, NewValue: n, Description: "list/string form or case only — functionally identical"})
+				suffix, desc := cosmeticVerdict(spec, o, n)
+				out = append(out, ChangedAttribute{Key: key + "." + suffix, OldValue: o, NewValue: n, Description: desc})
 				continue
 			}
 			for _, f := range fields {
@@ -415,18 +431,101 @@ func compact(v any) string {
 	return s
 }
 
+// cosmeticTally accumulates which fields of one rule changed shape and in
+// which direction, and turns that into a key suffix + description.
+type cosmeticTally struct {
+	fields                                       []string
+	toList, toString, mixed, reordered, caseOnly int
+}
+
+func (t *cosmeticTally) pair(list string, oldHasScalar, newHasScalar, oldHasList, newHasList bool) {
+	t.fields = append(t.fields, list)
+	switch {
+	case oldHasScalar && !newHasScalar && newHasList:
+		t.toList++
+	case oldHasList && !newHasList && newHasScalar:
+		t.toString++
+	case oldHasScalar == newHasScalar && oldHasList == newHasList:
+		t.reordered++ // same shape, members in a different order
+	default:
+		t.mixed++
+	}
+}
+
+func (t *cosmeticTally) caseField(field string) {
+	t.fields = append(t.fields, field)
+	t.caseOnly++
+}
+
+// suffix renders "[f1,f2].<verdict>" (or "f1.<verdict>" for one field)
+// and a human description.
+func (t *cosmeticTally) suffix() (string, string) {
+	sort.Strings(t.fields)
+	fields := strings.Join(t.fields, ",")
+	if len(t.fields) > 1 {
+		fields = "[" + fields + "]"
+	}
+	var verdict, desc string
+	switch {
+	case t.mixed > 0 || (t.toList > 0 && t.toString > 0):
+		verdict, desc = NestedRewritten, "same members, string/list form rewritten"
+	case t.toList > 0:
+		verdict, desc = NestedStringToList, "same members, written as a list instead of a string"
+	case t.toString > 0:
+		verdict, desc = NestedListToString, "same members, written as a string instead of a list"
+	case t.reordered > 0:
+		verdict, desc = NestedRewritten, "same members, list order changed"
+	default:
+		verdict, desc = NestedCaseOnly, "letter case only"
+	}
+	if t.caseOnly > 0 && verdict != NestedCaseOnly {
+		desc += " (plus letter case)"
+	}
+	if fields == "" {
+		return verdict, desc + " — functionally identical"
+	}
+	return fields + "." + verdict, desc + " — functionally identical"
+}
+
+// cosmeticVerdict inspects a raw before/after element pair whose
+// normalised forms are equal and names the fields whose shape changed.
+func cosmeticVerdict(spec NestedSetSpec, o, n map[string]any) (string, string) {
+	var t cosmeticTally
+	for _, p := range spec.ScalarListPairs {
+		scalar, list := p[0], p[1]
+		if reflect.DeepEqual(o[scalar], n[scalar]) && reflect.DeepEqual(o[list], n[list]) {
+			continue
+		}
+		t.pair(list, nonEmptyString(o[scalar]), nonEmptyString(n[scalar]), len(stringSet(o[list])) > 0, len(stringSet(n[list])) > 0)
+	}
+	for _, k := range spec.CaseInsensitive {
+		os, ok1 := o[k].(string)
+		ns, ok2 := n[k].(string)
+		if ok1 && ok2 && os != ns && strings.EqualFold(os, ns) {
+			t.caseField(k)
+		}
+	}
+	return t.suffix()
+}
+
+func nonEmptyString(v any) bool {
+	s, ok := v.(string)
+	return ok && s != ""
+}
+
 // collapseFlatEquivalents applies pair/case equivalence to a resource whose
-// top-level attributes are the rule. When both halves of a scalar/list pair
-// changed and their member sets are equal, the two entries collapse to one
-// "<list>.format" entry. A case-only change to a CaseInsensitive field
-// becomes "<field>.format".
+// top-level attributes are the rule. Every scalar/list pair whose two
+// halves both changed with equal member sets, and every CaseInsensitive
+// field that changed only in case, is dropped and replaced by ONE entry
+// naming all of them: "[destination_address_prefixes,source_address_prefixes].string_to_list".
 func collapseFlatEquivalents(spec NestedSetSpec, attrs []ChangedAttribute) []ChangedAttribute {
 	byKey := map[string]ChangedAttribute{}
 	for _, a := range attrs {
 		byKey[a.Key] = a
 	}
 	drop := map[string]bool{}
-	var extra []ChangedAttribute
+	var t cosmeticTally
+	var firstOld, lastNew any
 	for _, p := range spec.ScalarListPairs {
 		scalar, list := p[0], p[1]
 		sa, hasS := byKey[scalar]
@@ -444,10 +543,11 @@ func collapseFlatEquivalents(spec NestedSetSpec, attrs []ChangedAttribute) []Cha
 		}
 		if reflect.DeepEqual(before, after) {
 			drop[scalar], drop[list] = true, true
-			extra = append(extra, ChangedAttribute{
-				Key: list + "." + NestedFormat, OldValue: sa.OldValue, NewValue: la.NewValue,
-				Description: "list/string form only — functionally identical",
-			})
+			t.pair(list, nonEmptyString(sa.OldValue), nonEmptyString(sa.NewValue), len(stringSet(la.OldValue)) > 0, len(stringSet(la.NewValue)) > 0)
+			if firstOld == nil {
+				firstOld = sa.OldValue
+			}
+			lastNew = la.NewValue
 		}
 	}
 	for _, k := range spec.CaseInsensitive {
@@ -459,7 +559,10 @@ func collapseFlatEquivalents(spec NestedSetSpec, attrs []ChangedAttribute) []Cha
 		n, ok2 := a.NewValue.(string)
 		if ok1 && ok2 && o != n && strings.EqualFold(o, n) {
 			drop[k] = true
-			extra = append(extra, ChangedAttribute{Key: k + "." + NestedFormat, OldValue: o, NewValue: n, Description: "case only — functionally identical"})
+			t.caseField(k)
+			if firstOld == nil {
+				firstOld, lastNew = o, n
+			}
 		}
 	}
 	if len(drop) == 0 {
@@ -471,7 +574,8 @@ func collapseFlatEquivalents(spec NestedSetSpec, attrs []ChangedAttribute) []Cha
 			out = append(out, a)
 		}
 	}
-	return append(out, extra...)
+	suffix, desc := t.suffix()
+	return append(out, ChangedAttribute{Key: suffix, OldValue: firstOld, NewValue: lastNew, Description: desc})
 }
 
 // BaseAttributeKey strips the per-element expansion from a key produced by
@@ -483,15 +587,55 @@ func BaseAttributeKey(key string) string {
 	if i := strings.IndexByte(key, '['); i >= 0 {
 		return key[:i]
 	}
-	if strings.HasSuffix(key, "."+NestedOrder) || strings.HasSuffix(key, "."+NestedFormat) {
+	if strings.HasSuffix(key, "."+NestedOrder) {
 		return key[:strings.LastIndexByte(key, '.')]
 	}
 	return key
 }
 
 // IsCosmeticKey reports whether an expanded key denotes a change with no
-// functional effect (".format" or ".order"). Impact resolvers map these to
-// ImpactNone unless config says otherwise.
+// functional effect (string_to_list, list_to_string, case_only, rewritten,
+// order). Impact resolvers map these to ImpactNone unless config says
+// otherwise.
 func IsCosmeticKey(key string) bool {
-	return strings.HasSuffix(key, "."+NestedFormat) || strings.HasSuffix(key, "."+NestedOrder)
+	for _, s := range cosmeticSuffixes {
+		if strings.HasSuffix(key, "."+s) {
+			return true
+		}
+	}
+	return false
+}
+
+// CosmeticVerdict returns the trailing verdict of a cosmetic key
+// ("string_to_list") or "" for any other key.
+func CosmeticVerdict(key string) string {
+	for _, s := range cosmeticSuffixes {
+		if strings.HasSuffix(key, "."+s) {
+			return s
+		}
+	}
+	return ""
+}
+
+// SummaryKey reduces an expanded key to the shape the plain-English
+// summariser groups on, dropping the element id and field list:
+//
+//	security_rule[allow-443].priority                        → security_rule.priority
+//	security_rule[allow-443].added                           → security_rule.added
+//	security_rule[x].[a,b].string_to_list                    → security_rule.string_to_list
+//	security_rule.order                                      → security_rule.order
+//	tags                                                     → tags
+//
+// Without it a tag-sweep style rewrite of 160 rules produced a key set of
+// 160 entries and a sentence to match.
+func SummaryKey(key string) string {
+	if !strings.Contains(key, "[") {
+		return key
+	}
+	base := BaseAttributeKey(key)
+	tail := key[strings.LastIndexByte(key, '.')+1:]
+	if tail == "" || tail == key {
+		return base
+	}
+	return base + "." + tail
 }
